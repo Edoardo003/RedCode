@@ -1,0 +1,214 @@
+# Security Assessment Report
+
+---
+
+## Report Metadata
+
+| Field           | Value               |
+| --------------- | ------------------- |
+| Report Title    | {{REPORT_TITLE}}    |
+| Client          | {{CLIENT_NAME}}     |
+| Prepared By     | {{ASSESSOR_NAME}}   |
+| Date            | {{REPORT_DATE}}     |
+| Version         | {{REPORT_VERSION}}  |
+| Classification  | {{CLASSIFICATION}}  |
+| Assessment Type | {{ASSESSMENT_TYPE}} |
+
+---
+
+## Executive Summary
+
+{{EXECUTIVE_SUMMARY}}
+
+This section should provide a high-level overview of the assessment, key findings, and overall security posture — suitable for non-technical stakeholders. Include:
+
+- Purpose of the assessment
+- Overall risk level (Critical/High/Medium/Low)
+- Number of findings by severity
+- Top 3 most impactful findings
+- Key recommendations
+
+### Risk Summary
+
+| Severity      | Count               |
+| ------------- | ------------------- |
+| Critical      | {{CRITICAL_COUNT}}  |
+| High          | {{HIGH_COUNT}}      |
+| Medium        | {{MEDIUM_COUNT}}    |
+| Low           | {{LOW_COUNT}}       |
+| Informational | {{INFO_COUNT}}      |
+| **Total**     | **{{TOTAL_COUNT}}** |
+
+---
+
+## Scope & Methodology
+
+### Scope
+
+| Asset       | Type       | In Scope |
+| ----------- | ---------- | -------- |
+| {{ASSET_1}} | {{TYPE_1}} | Yes      |
+| {{ASSET_2}} | {{TYPE_2}} | Yes      |
+| {{ASSET_3}} | {{TYPE_3}} | No       |
+
+### Testing Period
+
+- Start: {{START_DATE}}
+- End: {{END_DATE}}
+- Total duration: {{DURATION}}
+
+### Methodology
+
+{{METHODOLOGY_DESCRIPTION}}
+
+Testing was conducted following industry-standard methodologies:
+
+- OWASP Testing Guide v4.2
+- OWASP API Security Top 10 (2023)
+- PTES (Penetration Testing Execution Standard)
+- NIST SP 800-115
+
+### Tools Used
+
+| Tool       | Purpose            |
+| ---------- | ------------------ |
+| {{TOOL_1}} | {{TOOL_1_PURPOSE}} |
+| {{TOOL_2}} | {{TOOL_2_PURPOSE}} |
+| {{TOOL_3}} | {{TOOL_3_PURPOSE}} |
+
+---
+
+## Findings Summary
+
+| ID          | Title               | Severity | CVSS      | Status     |
+| ----------- | ------------------- | -------- | --------- | ---------- |
+| FINDING-001 | {{FINDING_1_TITLE}} | {{SEV}}  | {{SCORE}} | {{STATUS}} |
+| FINDING-002 | {{FINDING_2_TITLE}} | {{SEV}}  | {{SCORE}} | {{STATUS}} |
+| FINDING-003 | {{FINDING_3_TITLE}} | {{SEV}}  | {{SCORE}} | {{STATUS}} |
+
+---
+
+## Detailed Findings
+
+### FINDING-001: {{FINDING_1_TITLE}}
+
+| Field     | Value                              |
+| --------- | ---------------------------------- |
+| ID        | FINDING-001                        |
+| Severity  | **{{SEVERITY}}**                   |
+| CVSS v3.1 | {{CVSS_SCORE}} — `{{CVSS_VECTOR}}` |
+| CWE       | CWE-{{CWE_ID}} — {{CWE_NAME}}      |
+| Asset     | {{AFFECTED_ASSET}}                 |
+| Status    | {{STATUS}}                         |
+
+#### Description
+
+{{FINDING_DESCRIPTION}}
+
+Explain the vulnerability, its root cause, and the affected component in technical detail.
+
+#### Steps to Reproduce
+
+1. {{STEP_1}}
+2. {{STEP_2}}
+3. {{STEP_3}}
+4. {{STEP_4}}
+5. Observe: {{OBSERVATION}}
+
+#### Evidence
+
+**HTTP Request:**
+
+```http
+{{HTTP_REQUEST}}
+```
+
+**HTTP Response:**
+
+```http
+{{HTTP_RESPONSE}}
+```
+
+**Screenshot:**
+{{SCREENSHOT_REFERENCE}}
+
+#### Impact
+
+**Technical Impact:**
+{{TECHNICAL_IMPACT}}
+
+**Business Impact:**
+{{BUSINESS_IMPACT}}
+
+#### Remediation
+
+**Short-term (immediate mitigation):**
+{{SHORT_TERM_REMEDIATION}}
+
+**Long-term (permanent fix):**
+{{LONG_TERM_REMEDIATION}}
+
+**Code Example (if applicable):**
+
+```{{LANGUAGE}}
+{{REMEDIATION_CODE}}
+```
+
+#### References
+
+- {{REFERENCE_1}}
+- {{REFERENCE_2}}
+
+---
+
+_Repeat the FINDING template above for each additional finding._
+
+---
+
+## Remediation Roadmap
+
+### Immediate (0-7 days)
+
+1. {{IMMEDIATE_ACTION_1}}
+2. {{IMMEDIATE_ACTION_2}}
+
+### Short-term (1-4 weeks)
+
+1. {{SHORT_TERM_ACTION_1}}
+2. {{SHORT_TERM_ACTION_2}}
+
+### Long-term (1-3 months)
+
+1. {{LONG_TERM_ACTION_1}}
+2. {{LONG_TERM_ACTION_2}}
+
+---
+
+## Appendices
+
+### Appendix A — Tool Output
+
+{{RAW_TOOL_OUTPUT}}
+
+### Appendix B — Testing Methodology Details
+
+{{METHODOLOGY_DETAILS}}
+
+### Appendix C — CVSS v3.1 Scoring Details
+
+For each finding, the CVSS score was calculated using the following metrics:
+
+| Metric                   | Finding-001 | Finding-002 | Finding-003 |
+| ------------------------ | ----------- | ----------- | ----------- |
+| Attack Vector (AV)       | {{AV}}      | {{AV}}      | {{AV}}      |
+| Attack Complexity (AC)   | {{AC}}      | {{AC}}      | {{AC}}      |
+| Privileges Required (PR) | {{PR}}      | {{PR}}      | {{PR}}      |
+| User Interaction (UI)    | {{UI}}      | {{UI}}      | {{UI}}      |
+| Scope (S)                | {{S}}       | {{S}}       | {{S}}       |
+| Confidentiality (C)      | {{C}}       | {{C}}       | {{C}}       |
+| Integrity (I)            | {{I}}       | {{I}}       | {{I}}       |
+| Availability (A)         | {{A}}       | {{A}}       | {{A}}       |
+
+---
+
+_Report generated by RedCode — Cybersecurity Automation Platform_

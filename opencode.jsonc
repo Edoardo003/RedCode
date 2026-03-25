@@ -1,0 +1,105 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // ── Providers ──────────────────────────────────────────────────
+  "provider": {
+    // Local Qwen 3.5 9B via LM Studio — uncensored, for PoC generation
+    "lm-studio": {
+      "api": "http://10.10.99.100:1234/v1",
+      "name": "LM Studio (Qwen 3.5 9B Uncensored Aggressive)",
+      "npm": "@ai-sdk/openai-compatible",
+      "env": [],
+      "models": {
+        "qwen3.5-9b-uncensored-hauhaucs-aggressive": {
+          "name": "Qwen 3.5 9B Uncensored (Aggressive)",
+          "id": "qwen3.5-9b-uncensored-hauhaucs-aggressive",
+          "tool_call": true,
+          "temperature": true,
+          "reasoning": false,
+          "attachment": false,
+          "cost": { "input": 0, "output": 0 },
+          "limit": { "context": 32768, "output": 8192 },
+        },
+      },
+      "options": {
+        "apiKey": "lm-studio",
+      },
+    },
+  },
+
+  // ── MCP Servers ────────────────────────────────────────────────
+  "mcp": {
+    // HexStrike AI — 150+ security tools (nmap, nuclei, sqlmap, gobuster, etc.)
+    "hexstrike": {
+      "type": "local",
+      "command": [
+        "python3",
+        "hexstrike-ai/hexstrike_mcp.py",
+        "--server",
+        "http://localhost:8888",
+      ],
+    },
+
+    // Filesystem — read/write output directory for reports and results
+    "filesystem": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "./output",
+        "./templates",
+        "./wordlists",
+      ],
+    },
+  },
+
+  // ── Agent Configuration ────────────────────────────────────────
+  "agent": {
+    // Override default build agent for security context
+    "build": {
+      "model": "github-copilot/claude-sonnet-4-6",
+      "description": "RedCode orchestrator. Routes security tasks to specialized agents. Asks for confirmation before each phase.",
+    },
+
+    // Reconnaissance — target enumeration, OSINT, subdomain discovery
+    "recon": {
+      "model": "github-copilot/claude-sonnet-4-6",
+      "mode": "subagent",
+      "description": "Reconnaissance agent. Use @recon for target enumeration, subdomain discovery, OSINT, DNS recon, port scanning, and attack surface mapping.",
+      "steps": 30,
+    },
+
+    // Vulnerability scanning — automated scanning and analysis
+    "scanner": {
+      "model": "github-copilot/claude-sonnet-4-6",
+      "mode": "subagent",
+      "description": "Vulnerability scanner agent. Use @scanner for nuclei scans, nikto, web app scanning, service enumeration, and vulnerability assessment.",
+      "steps": 40,
+    },
+
+    // Exploit research — deep reasoning for exploit chains
+    "exploiter": {
+      "model": "github-copilot/o3",
+      "mode": "subagent",
+      "description": "Exploit research agent. Use @exploiter for vulnerability analysis, exploit chain construction, attack path mapping, and bypass techniques. Uses deep reasoning.",
+      "steps": 25,
+    },
+
+    // PoC writer — local uncensored model
+    "poc": {
+      "model": "lm-studio/qwen3.5-9b-uncensored-hauhaucs-aggressive",
+      "mode": "subagent",
+      "description": "PoC generator agent. Use @poc to write proof-of-concept exploit code. Runs on local uncensored model.",
+      "steps": 15,
+    },
+
+    // Report writer — structured security reports
+    "reporter": {
+      "model": "github-copilot/claude-sonnet-4-6",
+      "mode": "subagent",
+      "description": "Security report writer. Use @reporter to generate vulnerability reports in HackerOne, Bugcrowd, or custom format with CVSS scoring.",
+      "steps": 20,
+    },
+  },
+}
