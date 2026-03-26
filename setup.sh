@@ -98,11 +98,11 @@ ok "output/ directories created"
 
 if [ ! -d "hexstrike-ai" ]; then
   info "Cloning HexStrike AI..."
-  if git clone https://github.com/HexStrike-AI/hexstrike-ai.git hexstrike-ai 2>/dev/null; then
+  if git clone https://github.com/0x4m4/hexstrike-ai.git hexstrike-ai 2>/dev/null; then
     ok "HexStrike cloned"
   else
     warn "Failed to clone HexStrike. You may need to clone it manually:"
-    warn "  git clone https://github.com/HexStrike-AI/hexstrike-ai.git hexstrike-ai"
+    warn "  git clone https://github.com/0x4m4/hexstrike-ai.git hexstrike-ai"
   fi
 else
   ok "hexstrike-ai/ already exists"
@@ -167,6 +167,71 @@ echo "Next steps:"
 echo "  1. Edit .env with your LM_STUDIO_URL and BRAVE_API_KEY"
 echo "  2. Start LM Studio with qwen3.5-9b-uncensored-hauhaucs-aggressive loaded"
 echo "  3. Run: opencode"
+# ── RedCode Banner Customization ─────────────────────────────
+
+info "Setting up RedCode banner customization..."
+
+# Create a RedCode logo override that displays when OpenCode starts
+if command -v opencode >/dev/null 2>&1; then
+  OPENCODE_PATH=$(which opencode)
+  OPENCODE_DIR=$(dirname "$OPENCODE_PATH")
+  
+  # Create a wrapper script that shows RedCode banner
+  cat > redcode-banner.sh << 'EOF'
+#!/bin/bash
+# RedCode ASCII Art Banner
+echo -e "\x1b[91m"  # Red color
+cat << 'BANNER'
+██████╗ ███████╗██████╗  ██████╗ ██████╗ ██████╗ ███████╗
+██╔══██╗██╔════╝██╔══██╗██╔════╝██╔═══██╗██╔══██╗██╔════╝
+██████╔╝█████╗  ██║  ██║██║     ██║   ██║██║  ██║█████╗  
+██╔══██╗██╔══╝  ██║  ██║██║     ██║   ██║██║  ██║██╔══╝  
+██║  ██║███████╗██████╔╝╚██████╗╚██████╔╝██████╔╝███████╗
+╚═╝  ╚═╝╚══════╝╚═════╝  ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
+BANNER
+echo -e "\x1b[0m"  # Reset color
+echo "🔴 Cybersecurity Automation Platform"
+echo ""
+EOF
+
+  chmod +x redcode-banner.sh
+  
+  # Create opencode wrapper that shows RedCode banner first
+  if [ -w "$OPENCODE_DIR" ] 2>/dev/null; then
+    # If we have write access to opencode dir, create wrapper there
+    cp "$OPENCODE_PATH" "$OPENCODE_DIR/opencode-original" 2>/dev/null
+    cat > "$OPENCODE_DIR/redcode" << EOF
+#!/bin/bash
+# RedCode wrapper for OpenCode
+if [ "\$(pwd)" = "\$(realpath $(pwd))" ]; then
+  $(pwd)/redcode-banner.sh
+fi
+exec "$OPENCODE_DIR/opencode-original" "\$@"
+EOF
+    chmod +x "$OPENCODE_DIR/redcode"
+    ok "RedCode wrapper created at $OPENCODE_DIR/redcode"
+  else
+    # Create local wrapper in current directory
+    cat > redcode << EOF
+#!/bin/bash
+# RedCode wrapper for OpenCode - local version
+./redcode-banner.sh
+exec opencode "\$@"
+EOF
+    chmod +x redcode
+    ok "RedCode wrapper created in current directory"
+  fi
+else
+  warn "OpenCode not found. Install OpenCode first, then re-run this setup."
+fi
+
+echo ""
+echo "🚀 Setup complete! Run RedCode with:"
+if [ -f "redcode" ]; then
+  echo "  ./redcode                    — Launch RedCode (shows red banner)"
+else
+  echo "  redcode                      — Launch RedCode (shows red banner)"
+fi
 echo ""
 echo "Quick start commands inside opencode:"
 echo "  /target example.com      — Start recon on a target"
