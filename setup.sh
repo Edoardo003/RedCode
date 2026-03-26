@@ -122,7 +122,7 @@ fi
 info "Pre-installing MCP servers (optional, speeds up first opencode launch)..."
 
 npx -y @modelcontextprotocol/server-filesystem --help &>/dev/null && ok "filesystem MCP ready" || warn "filesystem MCP will install on first use"
-npx -y @modelcontextprotocol/server-brave-search --help &>/dev/null && ok "brave-search MCP ready" || warn "brave-search MCP will install on first use"
+npx -y @brave/brave-search-mcp-server --help &>/dev/null && ok "brave-search MCP ready" || warn "brave-search MCP will install on first use"
 npx -y @playwright/mcp@latest --help &>/dev/null && ok "playwright MCP ready" || warn "playwright MCP will install on first use"
 npx -y @modelcontextprotocol/server-fetch --help &>/dev/null && ok "fetch MCP ready" || warn "fetch MCP will install on first use"
 npx -y @modelcontextprotocol/server-sqlite --help &>/dev/null && ok "sqlite MCP ready" || warn "sqlite MCP will install on first use"
