@@ -167,59 +167,85 @@ echo "Next steps:"
 echo "  1. Edit .env with your LM_STUDIO_URL and BRAVE_API_KEY"
 echo "  2. Start LM Studio with qwen3.5-9b-uncensored-hauhaucs-aggressive loaded"
 echo "  3. Run: opencode"
-# ── RedCode Banner Customization ─────────────────────────────
+# ── RedCode CLI Logo Patch ──────────────────────────────────
 
-info "Setting up RedCode banner customization..."
+info "Patching OpenCode CLI to show RedCode logo..."
 
-# Create a RedCode logo override that displays when OpenCode starts
+# Find OpenCode installation and logo file
 if command -v opencode >/dev/null 2>&1; then
   OPENCODE_PATH=$(which opencode)
-  OPENCODE_DIR=$(dirname "$OPENCODE_PATH")
   
-  # Create a wrapper script that shows RedCode banner
-  cat > redcode-banner.sh << 'EOF'
-#!/bin/bash
-# RedCode ASCII Art Banner
-echo -e "\x1b[91m"  # Red color
-cat << 'BANNER'
-██████╗ ███████╗██████╗  ██████╗ ██████╗ ██████╗ ███████╗
-██╔══██╗██╔════╝██╔══██╗██╔════╝██╔═══██╗██╔══██╗██╔════╝
-██████╔╝█████╗  ██║  ██║██║     ██║   ██║██║  ██║█████╗  
-██╔══██╗██╔══╝  ██║  ██║██║     ██║   ██║██║  ██║██╔══╝  
-██║  ██║███████╗██████╔╝╚██████╗╚██████╔╝██████╔╝███████╗
-╚═╝  ╚═╝╚══════╝╚═════╝  ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
-BANNER
-echo -e "\x1b[0m"  # Reset color
-echo "🔴 Cybersecurity Automation Platform"
-echo ""
+  # Look for the logo.ts file in common locations
+  LOGO_FILE=""
+  for potential_path in \
+    "$(dirname "$OPENCODE_PATH")/../lib/node_modules/opencode-ai/dist/cli/logo.js" \
+    "$(dirname "$OPENCODE_PATH")/../packages/opencode/src/cli/logo.ts" \
+    "/opt/Progetti/opencode/packages/opencode/src/cli/logo.ts" \
+    "$(npm root -g)/opencode-ai/dist/cli/logo.js" \
+    "/usr/local/lib/node_modules/opencode-ai/dist/cli/logo.js"; do
+    if [ -f "$potential_path" ]; then
+      LOGO_FILE="$potential_path"
+      break
+    fi
+  done
+  
+  if [ -n "$LOGO_FILE" ]; then
+    info "Found OpenCode logo file: $LOGO_FILE"
+    
+    # Check if already patched by looking for RedCode signature
+    if grep -q "RedCode patched" "$LOGO_FILE" 2>/dev/null; then
+      ok "OpenCode already patched with RedCode logo"
+    else
+      # Backup original
+      cp "$LOGO_FILE" "${LOGO_FILE}.backup" 2>/dev/null || warn "Could not backup logo file"
+      
+      # Create RedCode ASCII logo to replace opencode  
+      cat > /tmp/redcode_logo.js << 'EOF'
+// RedCode patched logo
+export const logo = {
+  left: ["                   ", "█▀▀█ █▀▀▀ █▀▀▄ █▀▀▀", "█▀▀▄ █▀▀▀ █  █ █   ", "▀  ▀ ▀▀▀▀ ▀▀▀  ▀▀▀▀"],
+  right: ["             ▄     ", "█▀▀▀ █▀▀█ █▀▀▄ █▀▀▀", "█___ █  █ █  █ █▀▀▀", "▀▀▀▀ ▀▀▀▀ ▀▀▀  ▀▀▀▀"],
+}
+export const marks = "_^~"
 EOF
+      
+      # For TypeScript source files
+      if [[ "$LOGO_FILE" == *.ts ]]; then
+        cat > /tmp/redcode_logo_ts << 'EOF'
+// RedCode patched logo
+export const logo = {
+  left: ["                   ", "█▀▀█ █▀▀▀ █▀▀▄ █▀▀▀", "█▀▀▄ █▀▀▀ █  █ █   ", "▀  ▀ ▀▀▀▀ ▀▀▀  ▀▀▀▀"],
+  right: ["             ▄     ", "█▀▀▀ █▀▀█ █▀▀▄ █▀▀▀", "█___ █  █ █  █ █▀▀▀", "▀▀▀▀ ▀▀▀▀ ▀▀▀  ▀▀▀▀"],
+}
 
-  chmod +x redcode-banner.sh
-  
-  # Create opencode wrapper that shows RedCode banner first
-  if [ -w "$OPENCODE_DIR" ] 2>/dev/null; then
-    # If we have write access to opencode dir, create wrapper there
-    cp "$OPENCODE_PATH" "$OPENCODE_DIR/opencode-original" 2>/dev/null
-    cat > "$OPENCODE_DIR/redcode" << EOF
-#!/bin/bash
-# RedCode wrapper for OpenCode
-if [ "\$(pwd)" = "\$(realpath $(pwd))" ]; then
-  $(pwd)/redcode-banner.sh
-fi
-exec "$OPENCODE_DIR/opencode-original" "\$@"
+export const marks = "_^~"
 EOF
-    chmod +x "$OPENCODE_DIR/redcode"
-    ok "RedCode wrapper created at $OPENCODE_DIR/redcode"
+        
+        if cp /tmp/redcode_logo_ts "$LOGO_FILE" 2>/dev/null; then
+          ok "OpenCode logo patched to show RedCode!"
+          
+          # If this is a TypeScript file in development, rebuild might be needed
+          if [[ "$LOGO_FILE" == *"/src/"* ]]; then
+            warn "TypeScript source patched. You may need to rebuild OpenCode:"
+            warn "  cd $(dirname "$LOGO_FILE")/../../../.. && bun run build"
+          fi
+        else
+          warn "Could not patch logo file (permission denied). Run as sudo or check permissions."
+        fi
+      else
+        # For JavaScript dist files
+        if cp /tmp/redcode_logo.js "$LOGO_FILE" 2>/dev/null; then
+          ok "OpenCode logo patched to show RedCode!"
+        else
+          warn "Could not patch logo file (permission denied). Run as sudo or check permissions."
+        fi
+      fi
+      
+      rm -f /tmp/redcode_logo.js /tmp/redcode_logo_ts
+    fi
   else
-    # Create local wrapper in current directory
-    cat > redcode << EOF
-#!/bin/bash
-# RedCode wrapper for OpenCode - local version
-./redcode-banner.sh
-exec opencode "\$@"
-EOF
-    chmod +x redcode
-    ok "RedCode wrapper created in current directory"
+    warn "Could not find OpenCode logo file. Manual patching required."
+    warn "Look for logo.ts or logo.js in your OpenCode installation."
   fi
 else
   warn "OpenCode not found. Install OpenCode first, then re-run this setup."
