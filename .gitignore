@@ -1,0 +1,26 @@
+# Environment
+.env
+.env.local
+
+# Output & data
+output/
+redcode.db
+redcode.db-*
+
+# Wordlists (downloaded at setup, too large for git)
+wordlists/*.txt
+wordlists/*.csv
+
+# Dependencies
+node_modules/
+.npm/
+
+# HexStrike (cloned at setup)
+hexstrike-ai/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# OpenCode state
+.opencode/state/

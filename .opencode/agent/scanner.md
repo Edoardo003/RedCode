@@ -96,6 +96,22 @@ For each finding include:
 - CWE ID
 - Brief reproduction steps
 
+## Skills
+
+Load these skills based on the target type:
+
+- **Web application** → Load `web-pentest` skill for OWASP methodology, injection techniques, auth testing
+- **API endpoints** → Load `api-pentest` skill for REST/GraphQL testing, auth bypass, rate limiting
+- **Network services** → Load `network-pentest` skill for service exploitation, protocol attacks
+- **Cloud infrastructure** → Load `cloud-pentest` skill for cloud misconfigurations, IAM, storage exposure
+- **Bug bounty** → Load `bug-bounty` skill for scope awareness and platform rules
+
+## Tools Beyond HexStrike
+
+- **Fetch** — Use for manual HTTP requests to verify findings, test edge cases, replay attacks
+- **Playwright** — Use for dynamic page analysis, JavaScript-heavy apps, SPAs that tools miss
+- **SQLite** — Use to persist scan results across sessions, track what's been tested
+
 ## Rules
 
 - ALWAYS ask user before running intrusive scans (SQLi, brute force, active exploitation)

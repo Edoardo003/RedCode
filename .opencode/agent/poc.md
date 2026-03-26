@@ -120,6 +120,19 @@ if __name__ == "__main__":
     main()
 ```
 
+## Skills
+
+Load skills matching the vulnerability type:
+
+- **Web vulnerability PoC** → Load `web-pentest` skill for payload construction, encoding techniques
+- **API vulnerability PoC** → Load `api-pentest` skill for API-specific exploit patterns
+
+## Tools
+
+- **Fetch** — Use for testing PoC HTTP requests before finalizing code
+- **Playwright** — Use for browser-based PoC verification (XSS rendering, CSRF triggering)
+- **Filesystem** — Use to save PoC files to `output/pocs/`
+
 ## Rules
 
 - ALWAYS include a disclaimer that the PoC is for authorized testing only

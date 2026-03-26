@@ -90,6 +90,19 @@ Save reports to `output/reports/` with descriptive names:
 - `output/reports/bugcrowd_ssrf_webhook.md`
 - `output/reports/pentest_report_example_com.md`
 
+## Skills
+
+Load these skills for report generation:
+
+- **Report writing** → Load `report-writing` skill for professional formatting, evidence standards, CVSS methodology
+- **Bug bounty submission** → Load `bug-bounty` skill for platform-specific formatting rules (HackerOne/Bugcrowd)
+
+## Tools
+
+- **Filesystem** — Use to read templates from `templates/` and write reports to `output/reports/`
+- **SQLite** — Use to pull findings from the database for comprehensive reports
+- **Playwright** — Use to take screenshots of vulnerabilities as report evidence
+
 ## Rules
 
 - ALWAYS use the appropriate template from templates/ as the base structure

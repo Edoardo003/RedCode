@@ -5,7 +5,7 @@
   "provider": {
     // Local Qwen 3.5 9B via LM Studio — uncensored, for PoC generation
     "lm-studio": {
-      "api": "http://10.10.99.100:1234/v1",
+      "api": "{env:LM_STUDIO_URL}",
       "name": "LM Studio (Qwen 3.5 9B Uncensored Aggressive)",
       "npm": "@ai-sdk/openai-compatible",
       "env": [],
@@ -52,53 +52,75 @@
         "./wordlists",
       ],
     },
+
+    // Brave Search — OSINT, CVE lookup, exploit research, bug bounty write-ups
+    "brave-search": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-brave-search"],
+      "env": {
+        "BRAVE_API_KEY": "{env:BRAVE_API_KEY}",
+      },
+    },
+
+    // Playwright — browser automation for verifying web vulns, screenshots, auth flows
+    "playwright": {
+      "type": "local",
+      "command": ["npx", "-y", "@playwright/mcp@latest", "--headless"],
+    },
+
+    // Fetch — HTTP client for testing API endpoints, custom requests
+    "fetch": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-fetch"],
+    },
+
+    // SQLite — persist findings, scan history, target tracking across sessions
+    "sqlite": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-sqlite",
+        "{env:REDCODE_DB}",
+      ],
+    },
   },
 
   // ── Agent Configuration ────────────────────────────────────────
+  // Full agent prompts live in .opencode/agent/*.md
+  // Only model, mode, and steps are set here
   "agent": {
-    // Override default build agent for security context
     "build": {
       "model": "github-copilot/claude-sonnet-4-6",
-      "description": "RedCode orchestrator. Routes security tasks to specialized agents. Asks for confirmation before each phase.",
     },
 
-    // Reconnaissance — target enumeration, OSINT, subdomain discovery
     "recon": {
       "model": "github-copilot/claude-sonnet-4-6",
       "mode": "subagent",
-      "description": "Reconnaissance agent. Use @recon for target enumeration, subdomain discovery, OSINT, DNS recon, port scanning, and attack surface mapping.",
       "steps": 30,
     },
 
-    // Vulnerability scanning — automated scanning and analysis
     "scanner": {
       "model": "github-copilot/claude-sonnet-4-6",
       "mode": "subagent",
-      "description": "Vulnerability scanner agent. Use @scanner for nuclei scans, nikto, web app scanning, service enumeration, and vulnerability assessment.",
       "steps": 40,
     },
 
-    // Exploit research — deep reasoning for exploit chains
     "exploiter": {
       "model": "github-copilot/o3",
       "mode": "subagent",
-      "description": "Exploit research agent. Use @exploiter for vulnerability analysis, exploit chain construction, attack path mapping, and bypass techniques. Uses deep reasoning.",
       "steps": 25,
     },
 
-    // PoC writer — local uncensored model
     "poc": {
       "model": "lm-studio/qwen3.5-9b-uncensored-hauhaucs-aggressive",
       "mode": "subagent",
-      "description": "PoC generator agent. Use @poc to write proof-of-concept exploit code. Runs on local uncensored model.",
       "steps": 15,
     },
 
-    // Report writer — structured security reports
     "reporter": {
       "model": "github-copilot/claude-sonnet-4-6",
       "mode": "subagent",
-      "description": "Security report writer. Use @reporter to generate vulnerability reports in HackerOne, Bugcrowd, or custom format with CVSS scoring.",
       "steps": 20,
     },
   },

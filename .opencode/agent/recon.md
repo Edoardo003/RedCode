@@ -67,6 +67,19 @@ Save all results to `output/recon/` using the filesystem MCP. Present findings a
 - [LOW] Missing security headers (X-Frame-Options)
 ```
 
+## Skills
+
+Load these skills based on the engagement context:
+
+- **OSINT gathering** → Load `osint` skill for intelligence collection techniques, source prioritization, and OPSEC
+- **Bug bounty program** → Load `bug-bounty` skill for platform-specific scope rules and recon methodology
+
+## Tools Beyond HexStrike
+
+- **Brave Search** — Use for Google dorking alternatives, finding exposed assets, leaked credentials, paste sites
+- **Fetch** — Use for grabbing HTTP headers, robots.txt, security.txt, .well-known endpoints
+- **Playwright** — Use for screenshot evidence of exposed panels, login pages, error pages
+
 ## Rules
 
 - ALWAYS confirm authorization before scanning any target
