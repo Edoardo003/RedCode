@@ -101,7 +101,7 @@ Skills auto-load based on context. Available skill packs:
 Copy `.env.example` to `.env` and set:
 
 ```bash
-LM_STUDIO_URL=http://10.10.99.100:1234/v1   # Your LM Studio endpoint
+LM_STUDIO_URL=http://10.10.10.55:1234/v1    # Your LM Studio endpoint
 BRAVE_API_KEY=BSA...                          # From brave.com/search/api
 REDCODE_DB=./redcode.db                       # SQLite database path
 ```

@@ -80,13 +80,13 @@ set -a
 source .env 2>/dev/null || true
 set +a
 
-if [ -z "${LM_STUDIO_URL:-}" ] || [ "${LM_STUDIO_URL}" = "http://10.10.99.100:1234/v1" ]; then
+if [ -z "${LM_STUDIO_URL:-}" ] || [ "${LM_STUDIO_URL}" = "http://10.10.10.55:1234/v1" ]; then
   echo ""
   echo -e "${CYAN}LM Studio Configuration${NC}"
   echo "LM Studio hosts the local AI model for PoC generation."
-  echo -e "Enter the IP/host of the machine running LM Studio (default: ${YELLOW}10.10.99.100${NC}):"
+  echo -e "Enter the IP/host of the machine running LM Studio (default: ${YELLOW}10.10.10.55${NC}):"
   read -r lm_ip
-  lm_ip="${lm_ip:-10.10.99.100}"
+  lm_ip="${lm_ip:-10.10.10.55}"
   LM_STUDIO_URL="http://${lm_ip}:1234/v1"
   sed -i "s|LM_STUDIO_URL=.*|LM_STUDIO_URL=${LM_STUDIO_URL}|" .env
   ok "LM_STUDIO_URL set to $LM_STUDIO_URL"
@@ -162,80 +162,103 @@ OPENCODE_BIN=$(which opencode 2>/dev/null || echo "")
 if [ -z "$OPENCODE_BIN" ]; then
   warn "opencode binary not found — skipping logo patch"
 else
-  ORIG_MARKER='\u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2584'
+  cp "$OPENCODE_BIN" /tmp/opencode_tobepatch
 
-  if strings "$OPENCODE_BIN" 2>/dev/null | grep -q "RedCode patched"; then
-    ok "OpenCode binary already patched with RedCode logo"
-  elif ! strings "$OPENCODE_BIN" 2>/dev/null | grep -q "$ORIG_MARKER"; then
-    warn "Could not locate logo strings in binary — may already be patched or binary format changed"
-  else
-    cp "$OPENCODE_BIN" "${OPENCODE_BIN}.orig" 2>/dev/null || true
-    cp "$OPENCODE_BIN" /tmp/opencode_tobepatch
-
-    python3 - << 'PYEOF'
+  result=$(python3 - << 'PYEOF'
 import os, sys
 
-src = '/tmp/opencode_tobepatch'
-data = open(src, 'rb').read()
+path = '/tmp/opencode_tobepatch'
+data = open(path, 'rb').read()
 
-orig = (
-    b'var logo = {\n'
-    b'  left: ["                   ", '
-    b'"\\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2584", '
-    b'"\\u2588__\\u2588 \\u2588__\\u2588 \\u2588^^^ \\u2588__\\u2588", '
-    b'"\\u2580\\u2580\\u2580\\u2580 \\u2588\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580~~\\u2580"],\n'
-    b'  right: ["             \\u2584     ", '
-    b'"\\u2588\\u2580\\u2580\\u2580 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588", '
-    b'"\\u2588___ \\u2588__\\u2588 \\u2588__\\u2588 \\u2588^^^", '
-    b'"\\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580"]\n'
-    b'};\nvar marks = "_^~";'
-)
+# Row-by-row replacement: matches individual logo rows regardless of
+# surrounding structure (var logo = {...} formatting differs between
+# opencode v1.3.2 and v1.3.3 due to Bun bundler changes).
+# Each (old, new) pair has IDENTICAL byte length — verified.
 
-new = (
-    b'var logo = {\n'
-    b'  left: ["                   ", '
-    b'"\\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2580 \\u2588\\u2580\\u2580\\u2584 \\u2588\\u2580\\u2580\\u2580", '
-    b'"\\u2588\\u2580_\\u2584 \\u2588^^^ \\u2588__\\u2588 \\u2588___", '
-    b'"\\u2580  \\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580"],\n'
-    b'  right: ["             \\u2584     ", '
-    b'"\\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2580", '
-    b'"\\u2588__\\u2588 \\u2588__\\u2588 \\u2588^^^ \\u2588___", '
-    b'"\\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580"]\n'
-    b'};\nvar marks = "_^~";'
-)
+# Strategy 1: escape-sequence encoding (\u2588 = 6 ASCII bytes)
+esc = [
+    # Left row 1 (top): OPEN -> REDC
+    (b'\\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2584',
+     b'\\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2580 \\u2588\\u2580\\u2580\\u2584 \\u2588\\u2580\\u2580\\u2580'),
+    # Left row 2 (mid): OPEN -> REDC
+    (b'\\u2588__\\u2588 \\u2588__\\u2588 \\u2588^^^ \\u2588__\\u2588',
+     b'\\u2588\\u2580_\\u2584 \\u2588^^^ \\u2588__\\u2588 \\u2588___'),
+    # Left row 3 (bot): OPEN -> REDC
+    (b'\\u2580\\u2580\\u2580\\u2580 \\u2588\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580~~\\u2580',
+     b'\\u2580  \\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580'),
+    # Right row 1 (top): CODE -> ODE+
+    (b'\\u2588\\u2580\\u2580\\u2580 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588',
+     b'\\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2580'),
+    # Right row 2 (mid): CODE -> ODE+
+    (b'\\u2588___ \\u2588__\\u2588 \\u2588__\\u2588 \\u2588^^^',
+     b'\\u2588__\\u2588 \\u2588__\\u2588 \\u2588^^^ \\u2588___'),
+]
 
-if len(orig) != len(new):
-    print(f"SKIP: byte length mismatch ({len(orig)} vs {len(new)})", file=sys.stderr)
+# Strategy 2: raw UTF-8 encoding (fallback for future Bun versions)
+utf8 = [
+    ('\u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2584'.encode(),
+     '\u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2580 \u2588\u2580\u2580\u2584 \u2588\u2580\u2580\u2580'.encode()),
+    ('\u2588__\u2588 \u2588__\u2588 \u2588^^^ \u2588__\u2588'.encode(),
+     '\u2588\u2580_\u2584 \u2588^^^ \u2588__\u2588 \u2588___'.encode()),
+    ('\u2580\u2580\u2580\u2580 \u2588\u2580\u2580\u2580 \u2580\u2580\u2580\u2580 \u2580~~\u2580'.encode(),
+     '\u2580  \u2580 \u2580\u2580\u2580\u2580 \u2580\u2580\u2580\u2580 \u2580\u2580\u2580\u2580'.encode()),
+    ('\u2588\u2580\u2580\u2580 \u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2588'.encode(),
+     '\u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2580'.encode()),
+    ('\u2588___ \u2588__\u2588 \u2588__\u2588 \u2588^^^'.encode(),
+     '\u2588__\u2588 \u2588__\u2588 \u2588^^^ \u2588___'.encode()),
+]
+
+# Detect already-patched binary (REDC top row present)
+redc_esc = b'\\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2580 \\u2588\\u2580\\u2580\\u2584 \\u2588\\u2580\\u2580\\u2580'
+redc_utf = '\u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2580 \u2588\u2580\u2580\u2584 \u2588\u2580\u2580\u2580'.encode()
+if redc_esc in data or redc_utf in data:
+    print("patched")
+    sys.exit(0)
+
+# Try escape-sequence patterns first
+ok = 0
+for old, new in esc:
+    assert len(old) == len(new), f"esc length {len(old)} vs {len(new)}"
+    if data.count(old) == 1:
+        data = data.replace(old, new, 1)
+        ok += 1
+
+# Fallback to raw UTF-8 if no escape patterns matched
+if ok == 0:
+    for old, new in utf8:
+        assert len(old) == len(new), f"utf8 length {len(old)} vs {len(new)}"
+        if data.count(old) == 1:
+            data = data.replace(old, new, 1)
+            ok += 1
+
+if ok == 0:
+    print("no patterns found")
     sys.exit(1)
 
-count = data.count(orig)
-if count != 1:
-    print(f"SKIP: found {count} matches (expected 1)", file=sys.stderr)
-    sys.exit(1)
-
-patched = data.replace(orig, new, 1)
-open(src, 'wb').write(patched)
-os.chmod(src, 0o755)
-print("ok")
+open(path, 'wb').write(data)
+os.chmod(path, 0o755)
+print(f"ok ({ok}/5 rows)")
 PYEOF
+  )
 
-    if [ $? -eq 0 ]; then
-      mv /tmp/opencode_tobepatch "${OPENCODE_BIN}.new"
-      mv "${OPENCODE_BIN}.new" "$OPENCODE_BIN"
-      ok "OpenCode binary patched — logo now shows RedCode!"
-    else
-      warn "Binary patch failed (logo strings not found — version mismatch?)"
-      warn "The OpenCode logo.ts source was already patched for future rebuilds"
+  case "$result" in
+    ok*)
+      # Backup original before replacing
+      cp "$OPENCODE_BIN" "${OPENCODE_BIN}.orig" 2>/dev/null || true
+      mv /tmp/opencode_tobepatch "$OPENCODE_BIN"
+      ok "OpenCode binary patched — logo now shows RedCode! ($result)"
+      ;;
+    patched)
+      ok "OpenCode binary already shows RedCode logo"
       rm -f /tmp/opencode_tobepatch
-    fi
-  fi
-fi
-
-# ── Also patch ui.ts colors if source is available ────────────
-
-OPENCODE_UI=$(find /opt/Progetti/opencode /usr/local/lib /root -name "ui.ts" -path "*/cli/ui.ts" 2>/dev/null | head -1 || true)
-if [ -n "$OPENCODE_UI" ] && ! grep -q '91m' "$OPENCODE_UI" 2>/dev/null; then
-  sed -i 's/\\x1b\[90m.*left fg/\\x1b[91m/g' "$OPENCODE_UI" 2>/dev/null || true
+      ;;
+    *)
+      warn "Binary patch failed: $result"
+      warn "Run: strings \$(which opencode) | grep 'u2588' | head -5"
+      warn "and share the output so we can update the patch pattern"
+      rm -f /tmp/opencode_tobepatch
+      ;;
+  esac
 fi
 
 # ── Connectivity checks ───────────────────────────────────────
