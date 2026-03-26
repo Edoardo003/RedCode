@@ -47,7 +47,7 @@ else
 fi
 
 if ! command -v python3 &>/dev/null; then
-  fail "python3 required for HexStrike. Install Python 3.10+"
+  fail "python3 required for HexStrike and MCP servers. Install Python 3.10+"
   missing=1
 else
   ok "python3 $(python3 --version 2>&1 | awk '{print $2}')"
@@ -68,30 +68,51 @@ fi
 
 echo ""
 
-# ── Environment file ───────────────────────────────────────────
+# ── Interactive LM Studio configuration ───────────────────────
 
 if [ ! -f .env ]; then
   info "Creating .env from template..."
   cp .env.example .env
-  ok ".env created — edit it with your values"
-  warn "Set LM_STUDIO_URL and BRAVE_API_KEY in .env before running opencode"
-else
-  ok ".env already exists"
+  ok ".env created"
 fi
-
-# ── Load env vars ──────────────────────────────────────────────
 
 set -a
 source .env 2>/dev/null || true
 set +a
 
+if [ -z "${LM_STUDIO_URL:-}" ] || [ "${LM_STUDIO_URL}" = "http://10.10.99.100:1234/v1" ]; then
+  echo ""
+  echo -e "${CYAN}LM Studio Configuration${NC}"
+  echo "LM Studio hosts the local AI model for PoC generation."
+  echo -e "Enter the IP/host of the machine running LM Studio (default: ${YELLOW}10.10.99.100${NC}):"
+  read -r lm_ip
+  lm_ip="${lm_ip:-10.10.99.100}"
+  LM_STUDIO_URL="http://${lm_ip}:1234/v1"
+  sed -i "s|LM_STUDIO_URL=.*|LM_STUDIO_URL=${LM_STUDIO_URL}|" .env
+  ok "LM_STUDIO_URL set to $LM_STUDIO_URL"
+fi
+
+if [ -z "${BRAVE_API_KEY:-}" ] || [ "${BRAVE_API_KEY}" = "your_key_here" ]; then
+  echo ""
+  warn "BRAVE_API_KEY not set. Brave Search MCP won't work without it."
+  echo "Get a free key at: https://brave.com/search/api/"
+  echo "Enter BRAVE_API_KEY (or press Enter to skip):"
+  read -r brave_key
+  if [ -n "$brave_key" ]; then
+    sed -i "s|BRAVE_API_KEY=.*|BRAVE_API_KEY=${brave_key}|" .env
+    ok "BRAVE_API_KEY saved"
+  else
+    warn "Skipped — you can add it later in .env"
+  fi
+fi
+
+echo ""
+
 # ── Directory structure ────────────────────────────────────────
 
 info "Creating directory structure..."
-
 mkdir -p output/{recon/raw,scans/raw,exploits,pocs,reports}
 mkdir -p wordlists
-
 ok "output/ directories created"
 
 # ── HexStrike ──────────────────────────────────────────────────
@@ -101,62 +122,149 @@ if [ ! -d "hexstrike-ai" ]; then
   if git clone https://github.com/0x4m4/hexstrike-ai.git hexstrike-ai 2>/dev/null; then
     ok "HexStrike cloned"
   else
-    warn "Failed to clone HexStrike. You may need to clone it manually:"
+    warn "Failed to clone HexStrike. Clone manually:"
     warn "  git clone https://github.com/0x4m4/hexstrike-ai.git hexstrike-ai"
   fi
 else
   ok "hexstrike-ai/ already exists"
 fi
 
-# ── HexStrike dependencies ────────────────────────────────────
-
-if [ -d "hexstrike-ai" ]; then
-  if [ -f "hexstrike-ai/requirements.txt" ]; then
-    info "Installing HexStrike Python dependencies..."
-    pip3 install -r hexstrike-ai/requirements.txt --quiet 2>/dev/null && ok "HexStrike deps installed" || warn "Failed to install HexStrike deps. Run: pip3 install -r hexstrike-ai/requirements.txt"
-  fi
+if [ -d "hexstrike-ai" ] && [ -f "hexstrike-ai/requirements.txt" ]; then
+  info "Installing HexStrike Python dependencies..."
+  pip3 install -r hexstrike-ai/requirements.txt --quiet 2>/dev/null \
+    && ok "HexStrike deps installed" \
+    || warn "Failed — run manually: pip3 install -r hexstrike-ai/requirements.txt"
 fi
 
-# ── MCP server pre-install (optional, speeds up first run) ─────
+# ── Python MCP servers ─────────────────────────────────────────
 
-info "Pre-installing MCP servers (optional, speeds up first opencode launch)..."
+info "Installing Python MCP servers (fetch + sqlite)..."
+pip3 install mcp-server-fetch mcp-server-sqlite --quiet 2>/dev/null \
+  && ok "mcp-server-fetch and mcp-server-sqlite installed" \
+  || warn "Failed to install Python MCP servers — run: pip3 install mcp-server-fetch mcp-server-sqlite"
 
+# ── Node MCP servers ───────────────────────────────────────────
+
+info "Pre-installing Node MCP servers..."
 npx -y @modelcontextprotocol/server-filesystem --help &>/dev/null && ok "filesystem MCP ready" || warn "filesystem MCP will install on first use"
 npx -y @brave/brave-search-mcp-server --help &>/dev/null && ok "brave-search MCP ready" || warn "brave-search MCP will install on first use"
 npx -y @playwright/mcp@latest --help &>/dev/null && ok "playwright MCP ready" || warn "playwright MCP will install on first use"
-npx -y @modelcontextprotocol/server-fetch --help &>/dev/null && ok "fetch MCP ready" || warn "fetch MCP will install on first use"
-npx -y @modelcontextprotocol/server-sqlite --help &>/dev/null && ok "sqlite MCP ready" || warn "sqlite MCP will install on first use"
-
-# ── Playwright browser ─────────────────────────────────────────
 
 info "Installing Playwright browser (Chromium)..."
 npx -y playwright install chromium 2>/dev/null && ok "Chromium installed" || warn "Run manually: npx playwright install chromium"
+
+# ── Patch OpenCode binary to show RedCode logo ─────────────────
+
+info "Patching OpenCode CLI to show RedCode logo..."
+
+OPENCODE_BIN=$(which opencode 2>/dev/null || echo "")
+
+if [ -z "$OPENCODE_BIN" ]; then
+  warn "opencode binary not found — skipping logo patch"
+else
+  ORIG_MARKER='\u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2584'
+
+  if strings "$OPENCODE_BIN" 2>/dev/null | grep -q "RedCode patched"; then
+    ok "OpenCode binary already patched with RedCode logo"
+  elif ! strings "$OPENCODE_BIN" 2>/dev/null | grep -q "$ORIG_MARKER"; then
+    warn "Could not locate logo strings in binary — may already be patched or binary format changed"
+  else
+    cp "$OPENCODE_BIN" "${OPENCODE_BIN}.orig" 2>/dev/null || true
+    cp "$OPENCODE_BIN" /tmp/opencode_tobepatch
+
+    python3 - << 'PYEOF'
+import os, sys
+
+src = '/tmp/opencode_tobepatch'
+data = open(src, 'rb').read()
+
+orig = (
+    b'var logo = {\n'
+    b'  left: ["                   ", '
+    b'"\\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2584", '
+    b'"\\u2588__\\u2588 \\u2588__\\u2588 \\u2588^^^ \\u2588__\\u2588", '
+    b'"\\u2580\\u2580\\u2580\\u2580 \\u2588\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580~~\\u2580"],\n'
+    b'  right: ["             \\u2584     ", '
+    b'"\\u2588\\u2580\\u2580\\u2580 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588", '
+    b'"\\u2588___ \\u2588__\\u2588 \\u2588__\\u2588 \\u2588^^^", '
+    b'"\\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580"]\n'
+    b'};\nvar marks = "_^~";'
+)
+
+new = (
+    b'var logo = {\n'
+    b'  left: ["                   ", '
+    b'"\\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2580 \\u2588\\u2580\\u2580\\u2584 \\u2588\\u2580\\u2580\\u2580", '
+    b'"\\u2588\\u2580_\\u2584 \\u2588^^^ \\u2588__\\u2588 \\u2588___", '
+    b'"\\u2580  \\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580"],\n'
+    b'  right: ["             \\u2584     ", '
+    b'"\\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2580", '
+    b'"\\u2588__\\u2588 \\u2588__\\u2588 \\u2588^^^ \\u2588___", '
+    b'"\\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580"]\n'
+    b'};\nvar marks = "_^~";'
+)
+
+if len(orig) != len(new):
+    print(f"SKIP: byte length mismatch ({len(orig)} vs {len(new)})", file=sys.stderr)
+    sys.exit(1)
+
+count = data.count(orig)
+if count != 1:
+    print(f"SKIP: found {count} matches (expected 1)", file=sys.stderr)
+    sys.exit(1)
+
+patched = data.replace(orig, new, 1)
+open(src, 'wb').write(patched)
+os.chmod(src, 0o755)
+print("ok")
+PYEOF
+
+    if [ $? -eq 0 ]; then
+      mv /tmp/opencode_tobepatch "${OPENCODE_BIN}.new"
+      mv "${OPENCODE_BIN}.new" "$OPENCODE_BIN"
+      ok "OpenCode binary patched — logo now shows RedCode!"
+    else
+      warn "Binary patch failed (logo strings not found — version mismatch?)"
+      warn "The OpenCode logo.ts source was already patched for future rebuilds"
+      rm -f /tmp/opencode_tobepatch
+    fi
+  fi
+fi
+
+# ── Also patch ui.ts colors if source is available ────────────
+
+OPENCODE_UI=$(find /opt/Progetti/opencode /usr/local/lib /root -name "ui.ts" -path "*/cli/ui.ts" 2>/dev/null | head -1 || true)
+if [ -n "$OPENCODE_UI" ] && ! grep -q '91m' "$OPENCODE_UI" 2>/dev/null; then
+  sed -i 's/\\x1b\[90m.*left fg/\\x1b[91m/g' "$OPENCODE_UI" 2>/dev/null || true
+fi
 
 # ── Connectivity checks ───────────────────────────────────────
 
 echo ""
 info "Checking connectivity..."
 
+set -a
+source .env 2>/dev/null || true
+set +a
+
 if [ -n "${LM_STUDIO_URL:-}" ]; then
   base="${LM_STUDIO_URL%/v1}"
   base="${base%/}"
-  if curl -s --connect-timeout 3 "$base/v1/models" &>/dev/null; then
+  if curl -s --connect-timeout 3 "${base}/v1/models" &>/dev/null; then
     ok "LM Studio reachable at $LM_STUDIO_URL"
   else
     warn "LM Studio not reachable at $LM_STUDIO_URL — make sure it's running"
   fi
-else
-  warn "LM_STUDIO_URL not set in .env"
 fi
 
-if [ -n "${BRAVE_API_KEY:-}" ]; then
+if [ -n "${BRAVE_API_KEY:-}" ] && [ "${BRAVE_API_KEY}" != "your_key_here" ]; then
   ok "BRAVE_API_KEY is set"
 else
-  warn "BRAVE_API_KEY not set in .env — Brave Search MCP won't work"
+  warn "BRAVE_API_KEY not set — Brave Search MCP won't work"
   warn "Get a free key at https://brave.com/search/api/"
 fi
 
-# ── Summary ────────────────────────────────────────────────────
+# ── Done ───────────────────────────────────────────────────────
 
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════╗${NC}"
@@ -164,100 +272,8 @@ echo -e "${GREEN}║          Setup Complete!             ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════╝${NC}"
 echo ""
 echo "Next steps:"
-echo "  1. Edit .env with your LM_STUDIO_URL and BRAVE_API_KEY"
-echo "  2. Start LM Studio with qwen3.5-9b-uncensored-hauhaucs-aggressive loaded"
-echo "  3. Run: opencode"
-# ── RedCode CLI Logo Patch ──────────────────────────────────
-
-info "Patching OpenCode CLI to show RedCode logo..."
-
-# Find OpenCode installation and logo file
-if command -v opencode >/dev/null 2>&1; then
-  OPENCODE_PATH=$(which opencode)
-  
-  # Look for the logo.ts file in common locations
-  LOGO_FILE=""
-  for potential_path in \
-    "$(dirname "$OPENCODE_PATH")/../lib/node_modules/opencode-ai/dist/cli/logo.js" \
-    "$(dirname "$OPENCODE_PATH")/../packages/opencode/src/cli/logo.ts" \
-    "/opt/Progetti/opencode/packages/opencode/src/cli/logo.ts" \
-    "$(npm root -g)/opencode-ai/dist/cli/logo.js" \
-    "/usr/local/lib/node_modules/opencode-ai/dist/cli/logo.js"; do
-    if [ -f "$potential_path" ]; then
-      LOGO_FILE="$potential_path"
-      break
-    fi
-  done
-  
-  if [ -n "$LOGO_FILE" ]; then
-    info "Found OpenCode logo file: $LOGO_FILE"
-    
-    # Check if already patched by looking for RedCode signature
-    if grep -q "RedCode patched" "$LOGO_FILE" 2>/dev/null; then
-      ok "OpenCode already patched with RedCode logo"
-    else
-      # Backup original
-      cp "$LOGO_FILE" "${LOGO_FILE}.backup" 2>/dev/null || warn "Could not backup logo file"
-      
-      # Create RedCode ASCII logo to replace opencode  
-      cat > /tmp/redcode_logo.js << 'EOF'
-// RedCode patched logo
-export const logo = {
-  left: ["                   ", "█▀▀█ █▀▀▀ █▀▀▄ █▀▀▀", "█▀▀▄ █▀▀▀ █  █ █   ", "▀  ▀ ▀▀▀▀ ▀▀▀  ▀▀▀▀"],
-  right: ["             ▄     ", "█▀▀▀ █▀▀█ █▀▀▄ █▀▀▀", "█___ █  █ █  █ █▀▀▀", "▀▀▀▀ ▀▀▀▀ ▀▀▀  ▀▀▀▀"],
-}
-export const marks = "_^~"
-EOF
-      
-      # For TypeScript source files
-      if [[ "$LOGO_FILE" == *.ts ]]; then
-        cat > /tmp/redcode_logo_ts << 'EOF'
-// RedCode patched logo
-export const logo = {
-  left: ["                   ", "█▀▀█ █▀▀▀ █▀▀▄ █▀▀▀", "█▀▀▄ █▀▀▀ █  █ █   ", "▀  ▀ ▀▀▀▀ ▀▀▀  ▀▀▀▀"],
-  right: ["             ▄     ", "█▀▀▀ █▀▀█ █▀▀▄ █▀▀▀", "█___ █  █ █  █ █▀▀▀", "▀▀▀▀ ▀▀▀▀ ▀▀▀  ▀▀▀▀"],
-}
-
-export const marks = "_^~"
-EOF
-        
-        if cp /tmp/redcode_logo_ts "$LOGO_FILE" 2>/dev/null; then
-          ok "OpenCode logo patched to show RedCode!"
-          
-          # If this is a TypeScript file in development, rebuild might be needed
-          if [[ "$LOGO_FILE" == *"/src/"* ]]; then
-            warn "TypeScript source patched. You may need to rebuild OpenCode:"
-            warn "  cd $(dirname "$LOGO_FILE")/../../../.. && bun run build"
-          fi
-        else
-          warn "Could not patch logo file (permission denied). Run as sudo or check permissions."
-        fi
-      else
-        # For JavaScript dist files
-        if cp /tmp/redcode_logo.js "$LOGO_FILE" 2>/dev/null; then
-          ok "OpenCode logo patched to show RedCode!"
-        else
-          warn "Could not patch logo file (permission denied). Run as sudo or check permissions."
-        fi
-      fi
-      
-      rm -f /tmp/redcode_logo.js /tmp/redcode_logo_ts
-    fi
-  else
-    warn "Could not find OpenCode logo file. Manual patching required."
-    warn "Look for logo.ts or logo.js in your OpenCode installation."
-  fi
-else
-  warn "OpenCode not found. Install OpenCode first, then re-run this setup."
-fi
-
-echo ""
-echo "🚀 Setup complete! Run RedCode with:"
-if [ -f "redcode" ]; then
-  echo "  ./redcode                    — Launch RedCode (shows red banner)"
-else
-  echo "  redcode                      — Launch RedCode (shows red banner)"
-fi
+echo "  1. Make sure LM Studio is running with qwen3.5-9b-uncensored-hauhaucs-aggressive"
+echo "  2. Run: opencode"
 echo ""
 echo "Quick start commands inside opencode:"
 echo "  /target example.com      — Start recon on a target"

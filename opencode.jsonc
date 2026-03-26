@@ -71,18 +71,13 @@
     // Fetch — HTTP client for testing API endpoints, custom requests
     "fetch": {
       "type": "local",
-      "command": ["npx", "-y", "@modelcontextprotocol/server-fetch"],
+      "command": ["mcp-server-fetch"],
     },
 
     // SQLite — persist findings, scan history, target tracking across sessions
     "sqlite": {
       "type": "local",
-      "command": [
-        "npx",
-        "-y",
-        "@modelcontextprotocol/server-sqlite",
-        "{env:REDCODE_DB}",
-      ],
+      "command": ["mcp-server-sqlite", "--db-path", "{env:REDCODE_DB}"],
     },
   },
 
