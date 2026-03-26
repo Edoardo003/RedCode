@@ -36,7 +36,7 @@
         "python3",
         "hexstrike-ai/hexstrike_mcp.py",
         "--server",
-        "http://localhost:8888",
+        "{env:HEXSTRIKE_URL}",
       ],
     },
 
@@ -88,22 +88,22 @@
 
   "agent": {
     "redcode": {
-      "model": "github-copilot/claude-sonnet-4-6",
+      "model": "github-copilot/claude-sonnet-4.6",
     },
 
     "recon": {
-      "model": "github-copilot/claude-sonnet-4-6",
-      "steps": 30,
+      "model": "github-copilot/claude-haiku-4.5",
+      "steps": 20,
     },
 
     "scanner": {
-      "model": "github-copilot/claude-sonnet-4-6",
-      "steps": 40,
+      "model": "github-copilot/gpt-5.4-mini",
+      "steps": 30,
     },
 
     "exploiter": {
-      "model": "github-copilot/o3",
-      "steps": 25,
+      "model": "github-copilot/gpt-5.4",
+      "steps": 20,
     },
 
     "poc": {
@@ -112,7 +112,7 @@
     },
 
     "reporter": {
-      "model": "github-copilot/claude-sonnet-4-6",
+      "model": "github-copilot/claude-sonnet-4.6",
       "steps": 20,
     },
   },

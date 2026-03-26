@@ -28,7 +28,7 @@ opencode (runtime)
 ├── opencode.jsonc          ← providers, MCP servers, agent config
 └── .opencode/
     ├── agent/              ← agent system prompts
-    │   ├── build.md        ← orchestrator (routes to other agents)
+    │   ├── redcode.md    ← orchestrator (routes to other agents)
     │   ├── recon.md        ← reconnaissance
     │   ├── scanner.md      ← vulnerability scanning
     │   ├── exploiter.md    ← exploit research (o3 reasoning)
@@ -53,14 +53,14 @@ opencode (runtime)
 
 ## Agents
 
-| Agent                    | Model              | Purpose                                                        |
-| ------------------------ | ------------------ | -------------------------------------------------------------- |
-| **build** (orchestrator) | claude-sonnet-4-6  | Routes tasks, manages pipeline, asks for confirmation          |
-| **@recon**               | claude-sonnet-4-6  | Target enumeration, OSINT, subdomain discovery, port scanning  |
-| **@scanner**             | claude-sonnet-4-6  | Nuclei, nikto, fuzzing, automated vulnerability detection      |
-| **@exploiter**           | o3                 | Exploit chains, bypass techniques, deep vulnerability analysis |
-| **@poc**                 | qwen3.5-9b (local) | Proof-of-concept exploit code — runs on uncensored local model |
-| **@reporter**            | claude-sonnet-4-6  | Professional reports for HackerOne, Bugcrowd, or clients       |
+| Agent                      | Model              | Purpose                                                        |
+| -------------------------- | ------------------ | -------------------------------------------------------------- |
+| **redcode** (orchestrator) | claude-sonnet-4.6  | Routes tasks, manages pipeline, asks for confirmation          |
+| **@recon**                 | claude-haiku-4.5   | Target enumeration, OSINT, subdomain discovery, port scanning  |
+| **@scanner**               | gpt-5.4-mini       | Nuclei, nikto, fuzzing, automated vulnerability detection      |
+| **@exploiter**             | gpt-5.4            | Exploit chains, bypass techniques, deep vulnerability analysis |
+| **@poc**                   | qwen3.5-9b (local) | Proof-of-concept exploit code — runs on uncensored local model |
+| **@reporter**              | claude-sonnet-4.6  | Professional reports for HackerOne, Bugcrowd, or clients       |
 
 ## Commands
 
@@ -103,6 +103,7 @@ Copy `.env.example` to `.env` and set:
 ```bash
 LM_STUDIO_URL=http://10.10.10.55:1234/v1    # Your LM Studio endpoint
 BRAVE_API_KEY=BSA...                          # From brave.com/search/api
+HEXSTRIKE_URL=http://localhost:8888           # HexStrike API server
 REDCODE_DB=./redcode.db                       # SQLite database path
 ```
 
