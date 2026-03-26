@@ -186,71 +186,45 @@ import os, sys
 path = '/tmp/opencode_tobepatch'
 data = open(path, 'rb').read()
 
-# Row-by-row replacement: matches individual logo rows regardless of
-# surrounding structure (var logo = {...} formatting differs between
-# opencode v1.3.2 and v1.3.3 due to Bun bundler changes).
-# Each (old, new) pair has IDENTICAL byte length — verified.
+# Row-by-row replacement of LEFT half only.
+# Logo: LEFT(OPEN) + RIGHT(CODE) → LEFT(RED+blank) + RIGHT(CODE unchanged)
+# Only 3 pairs needed — right side stays original.
 #
-# Logo layout: OPENCODE = Left(OPEN) + Right(CODE)
-# Target:      REDCODE  = Left(REDC) + Right(ODE + blank)
-#
-# Letters (3 rows each, using block chars + marks _^~):
+# Letters (3 rows each, block chars + marks _^~):
 #   R: top=█▀▀█  mid=█▀▀<sp>  bot=▀<sp><sp>▀
 #   E: top=█▀▀▀  mid=█^^^     bot=▀▀▀▀
 #   D: top=█▀▀▄  mid=█__█     bot=▀▀▀▀
-#   C: top=█▀▀▀  mid=█___     bot=▀▀▀▀
-#   O: top=█▀▀█  mid=█__█     bot=▀▀▀▀
-#   blank: all spaces (4th right-side position)
+#   [blank]: 4th position filled with padding
 
 # Strategy 1: escape-sequence encoding (\u2588 = 6 ASCII bytes in source)
 esc = [
-    # Pair 1: Left top (OPEN → REDC) — 99 bytes each
+    # Pair 1: Left top (OPEN → RED+blank) — 99 bytes each
     (b'\\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2584',
-     b'\\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2580 \\u2588\\u2580\\u2580\\u2584 \\u2588\\u2580\\u2580\\u2580'),
-    # Pair 2: Left mid (OPEN → REDC, R fixed: █▀▀<sp> not █▀_▄) — 54 bytes each
+     b'\\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2580 \\u2588\\u2580\\u2580\\u2584 \\u0020\\u0020\\u0020\\u0020'),
+    # Pair 2: Left mid (OPEN → RED+blank) — 54 bytes each
     (b'\\u2588__\\u2588 \\u2588__\\u2588 \\u2588^^^ \\u2588__\\u2588',
-     b'\\u2588\\u2580\\u2580  \\u2588^^^ \\u2588__\\u2588 \\u2588___'),
-    # Pair 3: Left bot (OPEN → REDC) — 89 bytes each
+     b'\\u2588\\u2580\\u2580  \\u2588^^^ \\u2588__\\u2588 \\u0020   '),
+    # Pair 3: Left bot (OPEN → RED+blank) — 89 bytes each
     (b'\\u2580\\u2580\\u2580\\u2580 \\u2588\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580~~\\u2580',
-     b'\\u2580  \\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580'),
-    # Pair 4: Right top (CODE → ODE + blank) — 99 bytes each
-    (b'\\u2588\\u2580\\u2580\\u2580 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588',
-     b'\\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u2588\\u2580\\u2580\\u2588 \\u0020\\u0020\\u0020\\u0020'),
-    # Pair 5: Right mid (CODE → ODE + blank) — 49 bytes each
-    (b'\\u2588___ \\u2588__\\u2588 \\u2588__\\u2588 \\u2588^^^',
-     b'\\u2588__\\u2588 \\u2588__\\u2588 \\u2588^^^ \\u0020   '),
-    # Pair 6: Right bot (CODE → ODE + blank) — 99 bytes each
-    (b'\\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580',
-     b'\\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u0020\\u0020\\u0020\\u0020'),
+     b'\\u2580  \\u2580 \\u2580\\u2580\\u2580\\u2580 \\u2580\\u2580\\u2580\\u2580 \\u0020\\u0020\\u0020\\u0020'),
 ]
 
 # Strategy 2: raw UTF-8 encoding (fallback for future Bun versions)
 utf8 = [
     # Pair 1: Left top — 51 bytes each
     ('\u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2584'.encode(),
-     '\u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2580 \u2588\u2580\u2580\u2584 \u2588\u2580\u2580\u2580'.encode()),
-    # Pair 2: Left mid (R fixed) — 33 bytes each
+     '\u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2580 \u2588\u2580\u2580\u2584 \u2003\u2003\u2003\u2003'.encode()),
+    # Pair 2: Left mid — 33 bytes each
     ('\u2588__\u2588 \u2588__\u2588 \u2588^^^ \u2588__\u2588'.encode(),
-     '\u2588\u2580\u2580  \u2588^^^ \u2588__\u2588 \u2588___'.encode()),
+     '\u2588^^  \u2588^^^ \u2588__\u2588 \u2003\u2003\u2003 '.encode()),
     # Pair 3: Left bot — 47 bytes each
     ('\u2580\u2580\u2580\u2580 \u2588\u2580\u2580\u2580 \u2580\u2580\u2580\u2580 \u2580~~\u2580'.encode(),
-     '\u2580  \u2580 \u2580\u2580\u2580\u2580 \u2580\u2580\u2580\u2580 \u2580\u2580\u2580\u2580'.encode()),
-    # Pair 4: Right top (blank with EM SPACE \u2003) — 51 bytes each
-    ('\u2588\u2580\u2580\u2580 \u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2588'.encode(),
-     '\u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2588 \u2588\u2580\u2580\u2588 \u2003\u2003\u2003\u2003'.encode()),
-    # Pair 5: Right mid (blank with EM SPACE) — 31 bytes each
-    ('\u2588___ \u2588__\u2588 \u2588__\u2588 \u2588^^^'.encode(),
-     '\u2588__\u2588 \u2588__\u2588 \u2588^^^ \u2003\u2003'.encode()),
-    # Pair 6: Right bot (blank with EM SPACE) — 51 bytes each
-    ('\u2580\u2580\u2580\u2580 \u2580\u2580\u2580\u2580 \u2580\u2580\u2580\u2580 \u2580\u2580\u2580\u2580'.encode(),
-     '\u2580\u2580\u2580\u2580 \u2580\u2580\u2580\u2580 \u2580\u2580\u2580\u2580 \u2003\u2003\u2003\u2003'.encode()),
+     '\u2580  \u2580 \u2580\u2580\u2580\u2580 \u2580\u2580\u2580\u2580 \u2003\u2003\u2003\u2003'.encode()),
 ]
 
-# Detect correctly-patched binary: check for right-side blank pattern
-# (the \u0020\u0020\u0020\u0020 at the end of right top row means
-# the 4th right position is blank = correct REDCODE, not REDCODEC)
-blank_esc = b'\\u2588\\u2580\\u2580\\u2588 \\u0020\\u0020\\u0020\\u0020'
-blank_utf = '\u2588\u2580\u2580\u2588 \u2003\u2003\u2003\u2003'.encode()
+# Detect already-patched binary: D-top followed by blank at left position 4
+blank_esc = b'\\u2588\\u2580\\u2580\\u2584 \\u0020\\u0020\\u0020\\u0020'
+blank_utf = '\u2588\u2580\u2580\u2584 \u2003\u2003\u2003\u2003'.encode()
 if blank_esc in data or blank_utf in data:
     print("patched")
     sys.exit(0)
@@ -277,7 +251,7 @@ if ok == 0:
 
 open(path, 'wb').write(data)
 os.chmod(path, 0o755)
-print(f"ok ({ok}/6 rows)")
+print(f"ok ({ok}/3 rows)")
 PYEOF
   )
 
@@ -288,10 +262,10 @@ PYEOF
         cp "$OPENCODE_BIN" "${OPENCODE_BIN}.orig"
       fi
       mv /tmp/opencode_tobepatch "$OPENCODE_BIN"
-      ok "OpenCode binary patched — logo now shows REDCODE! ($result)"
+      ok "OpenCode binary patched — logo now shows RED CODE! ($result)"
       ;;
     patched)
-      ok "OpenCode binary already shows REDCODE logo"
+      ok "OpenCode binary already shows RED CODE logo"
       rm -f /tmp/opencode_tobepatch
       ;;
     *)
