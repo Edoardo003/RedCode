@@ -36,15 +36,15 @@ try_install() {
   shift
   if command -v "$name" &>/dev/null; then
     ok "$name (already installed)"
-    ((skipped++))
+    skipped=$((skipped + 1))
     return 0
   fi
   if "$@" &>/dev/null 2>&1; then
     ok "$name"
-    ((installed++))
+    installed=$((installed + 1))
   else
     warn "Failed: $name"
-    ((failed++))
+    failed=$((failed + 1))
   fi
 }
 
@@ -53,20 +53,20 @@ go_install() {
   local pkg="$2"
   if command -v "$name" &>/dev/null; then
     ok "$name (already installed)"
-    ((skipped++))
+    skipped=$((skipped + 1))
     return 0
   fi
   if ! command -v go &>/dev/null; then
     warn "Skipped $name (go not installed)"
-    ((failed++))
+    failed=$((failed + 1))
     return 0
   fi
   if go install "$pkg" &>/dev/null 2>&1; then
     ok "$name (go install)"
-    ((installed++))
+    installed=$((installed + 1))
   else
     warn "Failed: $name (go install $pkg)"
-    ((failed++))
+    failed=$((failed + 1))
   fi
 }
 
@@ -75,15 +75,15 @@ pip_install() {
   local pkg="${2:-$1}"
   if command -v "$name" &>/dev/null; then
     ok "$name (already installed)"
-    ((skipped++))
+    skipped=$((skipped + 1))
     return 0
   fi
   if pip3 install "$pkg" --quiet &>/dev/null 2>&1; then
     ok "$name (pip)"
-    ((installed++))
+    installed=$((installed + 1))
   else
     warn "Failed: $name (pip install $pkg)"
-    ((failed++))
+    failed=$((failed + 1))
   fi
 }
 
@@ -147,8 +147,8 @@ go_install rustscan    "github.com/RustScan/RustScan@latest" 2>/dev/null || {
     info "Installing RustScan via deb..."
     wget -q "https://github.com/RustScan/RustScan/releases/latest/download/rustscan_2.3.0_amd64.deb" -O /tmp/rustscan.deb 2>/dev/null \
       && dpkg -i /tmp/rustscan.deb 2>/dev/null \
-      && ok "rustscan (deb)" && ((installed++)) \
-      || { warn "Failed: rustscan"; ((failed++)); }
+      && ok "rustscan (deb)" && installed=$((installed + 1)) \
+      || { warn "Failed: rustscan"; failed=$((failed + 1)); }
     rm -f /tmp/rustscan.deb
   fi
 }
@@ -187,8 +187,8 @@ pip_install wafw00f    "wafw00f"
 go_install feroxbuster "github.com/epi052/feroxbuster@latest" 2>/dev/null || {
   if ! command -v feroxbuster &>/dev/null; then
     apt-get install -y -qq feroxbuster 2>/dev/null \
-      && ok "feroxbuster (apt)" && ((installed++)) \
-      || { warn "Failed: feroxbuster"; ((failed++)); }
+      && ok "feroxbuster (apt)" && installed=$((installed + 1)) \
+      || { warn "Failed: feroxbuster"; failed=$((failed + 1)); }
   fi
 }
 
@@ -206,15 +206,15 @@ go_install uro          "github.com/s0md3v/uro@latest" 2>/dev/null || pip_instal
 # WPScan (Ruby gem)
 if ! command -v wpscan &>/dev/null; then
   if command -v gem &>/dev/null; then
-    gem install wpscan --quiet 2>/dev/null && ok "wpscan (gem)" && ((installed++)) || { warn "Failed: wpscan"; ((failed++)); }
+    gem install wpscan --quiet 2>/dev/null && ok "wpscan (gem)" && installed=$((installed + 1)) || { warn "Failed: wpscan"; failed=$((failed + 1)); }
   else
     apt-get install -y -qq ruby ruby-dev 2>/dev/null && gem install wpscan --quiet 2>/dev/null \
-      && ok "wpscan (gem)" && ((installed++)) \
-      || { warn "Failed: wpscan (needs ruby)"; ((failed++)); }
+      && ok "wpscan (gem)" && installed=$((installed + 1)) \
+      || { warn "Failed: wpscan (needs ruby)"; failed=$((failed + 1)); }
   fi
 else
   ok "wpscan (already installed)"
-  ((skipped++))
+  skipped=$((skipped + 1))
 fi
 
 # X8 parameter discovery
@@ -235,11 +235,11 @@ pip_install nosqlmap   "nosqlmap" 2>/dev/null || true
 if ! command -v tplmap &>/dev/null && [ ! -d "/opt/tplmap" ]; then
   git clone --quiet https://github.com/epinna/tplmap.git /opt/tplmap 2>/dev/null \
     && ln -sf /opt/tplmap/tplmap.py /usr/local/bin/tplmap 2>/dev/null \
-    && ok "tplmap (git)" && ((installed++)) \
-    || { warn "Failed: tplmap"; ((failed++)); }
+    && ok "tplmap (git)" && installed=$((installed + 1)) \
+    || { warn "Failed: tplmap"; failed=$((failed + 1)); }
 elif [ -d "/opt/tplmap" ]; then
   ok "tplmap (already installed)"
-  ((skipped++))
+  skipped=$((skipped + 1))
 fi
 
 # ══════════════════════════════════════════════════════════════
@@ -260,10 +260,10 @@ pip_install hash-identifier "hash-identifier" 2>/dev/null || true
 
 # Evil-WinRM (Ruby gem)
 if ! command -v evil-winrm &>/dev/null; then
-  gem install evil-winrm --quiet 2>/dev/null && ok "evil-winrm (gem)" && ((installed++)) || { warn "Failed: evil-winrm"; ((failed++)); }
+  gem install evil-winrm --quiet 2>/dev/null && ok "evil-winrm (gem)" && installed=$((installed + 1)) || { warn "Failed: evil-winrm"; failed=$((failed + 1)); }
 else
   ok "evil-winrm (already installed)"
-  ((skipped++))
+  skipped=$((skipped + 1))
 fi
 
 # CrackMapExec (legacy, netexec is successor)
@@ -299,25 +299,25 @@ pip_install ROPgadget  "ROPgadget"
 
 # one_gadget (Ruby)
 if ! command -v one_gadget &>/dev/null; then
-  gem install one_gadget --quiet 2>/dev/null && ok "one_gadget (gem)" && ((installed++)) || { warn "Failed: one_gadget"; ((failed++)); }
+  gem install one_gadget --quiet 2>/dev/null && ok "one_gadget (gem)" && installed=$((installed + 1)) || { warn "Failed: one_gadget"; failed=$((failed + 1)); }
 else
   ok "one_gadget (already installed)"
-  ((skipped++))
+  skipped=$((skipped + 1))
 fi
 
 # GDB plugins (PEDA, GEF)
 if [ ! -d "/opt/peda" ]; then
-  git clone --quiet https://github.com/longld/peda.git /opt/peda 2>/dev/null && ok "gdb-peda (git)" && ((installed++)) || { warn "Failed: gdb-peda"; ((failed++)); }
+  git clone --quiet https://github.com/longld/peda.git /opt/peda 2>/dev/null && ok "gdb-peda (git)" && installed=$((installed + 1)) || { warn "Failed: gdb-peda"; failed=$((failed + 1)); }
 else
   ok "gdb-peda (already installed)"
-  ((skipped++))
+  skipped=$((skipped + 1))
 fi
 
 if [ ! -f "/root/.gdbinit-gef.py" ] && [ ! -f "/opt/gef/gef.py" ]; then
-  wget -q -O /root/.gdbinit-gef.py https://gef.blah.cat/py 2>/dev/null && ok "gdb-gef" && ((installed++)) || { warn "Failed: gdb-gef"; ((failed++)); }
+  wget -q -O /root/.gdbinit-gef.py https://gef.blah.cat/py 2>/dev/null && ok "gdb-gef" && installed=$((installed + 1)) || { warn "Failed: gdb-gef"; failed=$((failed + 1)); }
 else
   ok "gdb-gef (already installed)"
-  ((skipped++))
+  skipped=$((skipped + 1))
 fi
 
 # Ghidra (headless, large download)
@@ -330,12 +330,12 @@ if ! command -v ghidra &>/dev/null && [ ! -d "/opt/ghidra" ]; then
     && unzip -q /tmp/ghidra.zip -d /opt/ 2>/dev/null \
     && mv /opt/ghidra_${GHIDRA_VER}_PUBLIC /opt/ghidra 2>/dev/null \
     && ln -sf /opt/ghidra/ghidraRun /usr/local/bin/ghidra 2>/dev/null \
-    && ok "ghidra ${GHIDRA_VER}" && ((installed++)) \
-    || { warn "Failed: ghidra (manual install may be needed)"; ((failed++)); }
+    && ok "ghidra ${GHIDRA_VER}" && installed=$((installed + 1)) \
+    || { warn "Failed: ghidra (manual install may be needed)"; failed=$((failed + 1)); }
   rm -f /tmp/ghidra.zip
 elif [ -d "/opt/ghidra" ]; then
   ok "ghidra (already installed)"
-  ((skipped++))
+  skipped=$((skipped + 1))
 fi
 
 # MSFVenom (Metasploit)
@@ -344,12 +344,12 @@ if ! command -v msfvenom &>/dev/null; then
   curl -sL https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb > /tmp/msfinstall 2>/dev/null \
     && chmod +x /tmp/msfinstall \
     && /tmp/msfinstall 2>/dev/null \
-    && ok "metasploit-framework" && ((installed++)) \
-    || { warn "Failed: metasploit (manual install may be needed)"; ((failed++)); }
+    && ok "metasploit-framework" && installed=$((installed + 1)) \
+    || { warn "Failed: metasploit (manual install may be needed)"; failed=$((failed + 1)); }
   rm -f /tmp/msfinstall
 else
   ok "msfvenom (already installed)"
-  ((skipped++))
+  skipped=$((skipped + 1))
 fi
 
 # ══════════════════════════════════════════════════════════════
@@ -368,27 +368,27 @@ if ! command -v trivy &>/dev/null; then
   wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key 2>/dev/null | gpg --dearmor -o /usr/share/keyrings/trivy.gpg 2>/dev/null
   echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" > /etc/apt/sources.list.d/trivy.list 2>/dev/null
   apt-get update -qq 2>/dev/null && apt-get install -y -qq trivy 2>/dev/null \
-    && ok "trivy (apt)" && ((installed++)) \
-    || { warn "Failed: trivy"; ((failed++)); }
+    && ok "trivy (apt)" && installed=$((installed + 1)) \
+    || { warn "Failed: trivy"; failed=$((failed + 1)); }
 else
   ok "trivy (already installed)"
-  ((skipped++))
+  skipped=$((skipped + 1))
 fi
 
 # Kube tools
 go_install kube-hunter "github.com/aquasecurity/kube-hunter@latest" 2>/dev/null || pip_install kube-hunter "kube-hunter"
 if ! command -v kube-bench &>/dev/null; then
-  go_install kube-bench "github.com/aquasecurity/kube-bench@latest" 2>/dev/null || { warn "Failed: kube-bench"; ((failed++)); }
+  go_install kube-bench "github.com/aquasecurity/kube-bench@latest" 2>/dev/null || { warn "Failed: kube-bench"; failed=$((failed + 1)); }
 fi
 
 # Docker bench
 if [ ! -d "/opt/docker-bench-security" ]; then
   git clone --quiet https://github.com/docker/docker-bench-security.git /opt/docker-bench-security 2>/dev/null \
-    && ok "docker-bench-security (git)" && ((installed++)) \
-    || { warn "Failed: docker-bench-security"; ((failed++)); }
+    && ok "docker-bench-security (git)" && installed=$((installed + 1)) \
+    || { warn "Failed: docker-bench-security"; failed=$((failed + 1)); }
 else
   ok "docker-bench-security (already installed)"
-  ((skipped++))
+  skipped=$((skipped + 1))
 fi
 
 # Cloud CLIs
@@ -398,8 +398,8 @@ try_install kubectl    apt-get install -y -qq kubectl 2>/dev/null || {
     curl -sLO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
       && install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl \
       && rm -f kubectl \
-      && ok "kubectl" && ((installed++)) \
-      || { warn "Failed: kubectl"; ((failed++)); }
+      && ok "kubectl" && installed=$((installed + 1)) \
+      || { warn "Failed: kubectl"; failed=$((failed + 1)); }
   fi
 }
 
@@ -416,10 +416,10 @@ try_install photorec   apt-get install -y -qq testdisk
 
 # Steg tools
 if ! command -v zsteg &>/dev/null; then
-  gem install zsteg --quiet 2>/dev/null && ok "zsteg (gem)" && ((installed++)) || { warn "Failed: zsteg"; ((failed++)); }
+  gem install zsteg --quiet 2>/dev/null && ok "zsteg (gem)" && installed=$((installed + 1)) || { warn "Failed: zsteg"; failed=$((failed + 1)); }
 else
   ok "zsteg (already installed)"
-  ((skipped++))
+  skipped=$((skipped + 1))
 fi
 
 pip_install stegsolve  "stegsolve" 2>/dev/null || true
