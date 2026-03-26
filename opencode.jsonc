@@ -18,7 +18,7 @@
           "reasoning": false,
           "attachment": false,
           "cost": { "input": 0, "output": 0 },
-          "limit": { "context": 32768, "output": 8192 },
+          "limit": { "context": 0, "output": 8192 },
         },
       },
       "options": {
@@ -114,6 +114,12 @@
     "reporter": {
       "model": "github-copilot/claude-sonnet-4.6",
       "steps": 20,
+    },
+
+    // Compaction agent — uses a capable model so compaction summaries are
+    // coherent even when triggered by lightweight models (e.g. the 9B PoC model).
+    "compaction": {
+      "model": "github-copilot/claude-haiku-4.5",
     },
   },
 }
