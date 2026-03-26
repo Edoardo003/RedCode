@@ -88,39 +88,36 @@
 
   // ── Agent Configuration ────────────────────────────────────────
   // Full agent prompts live in .opencode/agent/*.md
-  // Only model, mode, and steps are set here
+  // mode is set in each agent's frontmatter — primary = tab-switchable
+  "default_agent": "redcode",
+
   "agent": {
-    "build": {
+    "redcode": {
       "model": "github-copilot/claude-sonnet-4-6",
     },
 
     "recon": {
       "model": "github-copilot/claude-sonnet-4-6",
-      "mode": "subagent",
       "steps": 30,
     },
 
     "scanner": {
       "model": "github-copilot/claude-sonnet-4-6",
-      "mode": "subagent",
       "steps": 40,
     },
 
     "exploiter": {
       "model": "github-copilot/o3",
-      "mode": "subagent",
       "steps": 25,
     },
 
     "poc": {
       "model": "lm-studio/qwen3.5-9b-uncensored-hauhaucs-aggressive",
-      "mode": "subagent",
       "steps": 15,
     },
 
     "reporter": {
       "model": "github-copilot/claude-sonnet-4-6",
-      "mode": "subagent",
       "steps": 20,
     },
   },
