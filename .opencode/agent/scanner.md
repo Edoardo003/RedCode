@@ -85,7 +85,7 @@ INSERT INTO scans (target_id, tool, command, status) VALUES (?, 'nuclei', 'nucle
 
 ## Nuclei Templates
 
-After confirming a finding, suggest creating a custom Nuclei template via `@templates` for reusable detection. Existing custom templates are in `templates/nuclei/custom/`.
+After confirming a finding, suggest creating a custom Nuclei template via `@templates` for reusable detection. For high/critical confirmed findings, suggest generating a PoC via `@poc`. Existing custom templates are in `templates/nuclei/custom/`.
 
 ## Wordlists
 
