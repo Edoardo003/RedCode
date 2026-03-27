@@ -147,6 +147,41 @@ if [ -d "hexstrike-ai" ] && [ -f "hexstrike-ai/requirements.txt" ]; then
     || warn "Failed — run manually: pip3 install -r hexstrike-ai/requirements.txt"
 fi
 
+# ── Patch HexStrike timeouts (security scans can take hours) ──
+
+if [ -d "hexstrike-ai" ]; then
+  info "Patching HexStrike timeouts (300s → 3600s)..."
+  patched=0
+
+  if [ -f "hexstrike-ai/hexstrike_mcp.py" ]; then
+    if grep -q 'DEFAULT_REQUEST_TIMEOUT = 300' hexstrike-ai/hexstrike_mcp.py; then
+      sed -i 's/DEFAULT_REQUEST_TIMEOUT = 300/DEFAULT_REQUEST_TIMEOUT = 3600/' hexstrike-ai/hexstrike_mcp.py
+      patched=$((patched + 1))
+    elif grep -q 'DEFAULT_REQUEST_TIMEOUT = 3600' hexstrike-ai/hexstrike_mcp.py; then
+      patched=$((patched + 1))
+    fi
+  fi
+
+  if [ -f "hexstrike-ai/hexstrike_server.py" ]; then
+    if grep -q 'COMMAND_TIMEOUT = 300' hexstrike-ai/hexstrike_server.py; then
+      sed -i 's/COMMAND_TIMEOUT = 300/COMMAND_TIMEOUT = 3600/' hexstrike-ai/hexstrike_server.py
+      patched=$((patched + 1))
+    elif grep -q 'COMMAND_TIMEOUT = 3600' hexstrike-ai/hexstrike_server.py; then
+      patched=$((patched + 1))
+    fi
+  fi
+
+  if [ "$patched" -eq 2 ]; then
+    ok "HexStrike timeouts set to 1 hour (MCP client + server)"
+  elif [ "$patched" -eq 1 ]; then
+    warn "Partially patched ($patched/2) — check hexstrike_mcp.py and hexstrike_server.py"
+  else
+    warn "Could not patch HexStrike timeouts — files may have changed upstream"
+    warn "Manually set DEFAULT_REQUEST_TIMEOUT=3600 in hexstrike_mcp.py"
+    warn "and COMMAND_TIMEOUT=3600 in hexstrike_server.py"
+  fi
+fi
+
 # ── Python MCP servers ─────────────────────────────────────────
 
 info "Installing Python MCP servers (fetch + sqlite)..."
