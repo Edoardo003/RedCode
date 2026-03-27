@@ -44,29 +44,25 @@ ASK THE USER before proceeding to active recon. Active scanning touches the targ
 
 ### Phase 3 — Attack Surface Summary
 
-Compile all findings into a structured summary.
+Compile all findings into the structured handoff format and persist to SQLite.
 
-## Output Format
+## Structured Output
 
-Save all results to `output/recon/` using the filesystem MCP. Present findings as:
+After completing recon, save findings to `output/recon/findings.json` in the handoff format defined in AGENTS.md. Also persist each finding to the SQLite `findings` table:
 
+```sql
+INSERT INTO findings (target_id, finding_id, phase, type, severity, title, url, evidence, confidence)
+VALUES (?, 'FIND-RECON-001', 'recon', 'subdomain', 'info', 'Subdomain: api.example.com', 'https://api.example.com', 'DNS A record → 1.2.3.4', 'confirmed');
 ```
-## Target: [domain/IP]
-### Subdomains Found
-- sub1.example.com → 1.2.3.4 (A record)
-### Open Ports & Services
-- 80/tcp — nginx 1.21.6
-- 443/tcp — nginx 1.21.6 (TLS 1.2, 1.3)
-- 22/tcp — OpenSSH 8.9
-### Technologies Detected
-- Framework: Django 4.2
-- CMS: None
-- WAF: Cloudflare
-### Potential Entry Points
-- [HIGH] Exposed admin panel at /admin/
-- [MEDIUM] Outdated OpenSSH version
-- [LOW] Missing security headers (X-Frame-Options)
-```
+
+Finding types for recon: `subdomain`, `port`, `service`, `technology`, `email`, `credential`, `endpoint`.
+
+## Wordlists
+
+- `./wordlists/SecLists/` — Discovery/DNS/ for subdomain lists, Discovery/Web-Content/ for directory lists
+- `./wordlists/PayloadsAllTheThings/` — Methodology and Payload references
+
+Browse with the filesystem MCP to find the right list for the job.
 
 ## Skills
 
@@ -75,15 +71,12 @@ Load these skills based on the engagement context:
 - **OSINT gathering** → Load `osint` skill for intelligence collection techniques, source prioritization, and OPSEC
 - **Bug bounty program** → Load `bug-bounty` skill for platform-specific scope rules and recon methodology
 
-## Wordlists
-
-SecLists is available at `./wordlists/SecLists/`. Browse with the filesystem MCP to find the right list for the job (Discovery/, DNS/, Fuzzing/, Passwords/, etc.).
-
 ## Tools Beyond HexStrike
 
 - **Brave Search** — Use for Google dorking alternatives, finding exposed assets, leaked credentials, paste sites
 - **Fetch** — Use for grabbing HTTP headers, robots.txt, security.txt, .well-known endpoints
 - **Playwright** — Use for screenshot evidence of exposed panels, login pages, error pages
+- **SQLite** — Persist all findings for cross-session tracking
 
 ## Rules
 
@@ -91,5 +84,7 @@ SecLists is available at `./wordlists/SecLists/`. Browse with the filesystem MCP
 - ALWAYS ask user confirmation before active scanning (Phase 2)
 - NEVER scan targets outside the authorized scope
 - Save raw tool output to `output/recon/raw/` for reference
+- Save structured findings to `output/recon/findings.json`
+- Persist every finding to SQLite
 - Rate each finding with severity: HIGH, MEDIUM, LOW, INFO
 - Note any WAF/CDN/proxy detected — this affects later scanning strategy

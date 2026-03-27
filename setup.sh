@@ -124,20 +124,33 @@ echo ""
 info "Creating directory structure..."
 mkdir -p output/{recon/raw,scans/raw,exploits,pocs,reports}
 mkdir -p wordlists
-ok "output/ directories created"
+mkdir -p templates/nuclei/custom
+ok "directories created"
 
 # ── Wordlists (SecLists) ──────────────────────────────────────
 
 if [ ! -d "wordlists/SecLists" ]; then
-  info "Cloning SecLists (shallow) into wordlists/..."
-  if git clone --depth 1 https://github.com/danielmiessler/SecLists.git wordlists/SecLists 2>/dev/null; then
+  info "Cloning SecLists into wordlists/..."
+  if git clone https://github.com/danielmiessler/SecLists.git wordlists/SecLists; then
     ok "SecLists installed ($(du -sh wordlists/SecLists | cut -f1))"
   else
     warn "Failed to clone SecLists. Clone manually:"
-    warn "  git clone --depth 1 https://github.com/danielmiessler/SecLists.git wordlists/SecLists"
+    warn "  git clone https://github.com/danielmiessler/SecLists.git wordlists/SecLists"
   fi
 else
   ok "wordlists/SecLists already exists"
+fi
+
+if [ ! -d "wordlists/PayloadsAllTheThings" ]; then
+  info "Cloning PayloadsAllTheThings into wordlists/..."
+  if git clone https://github.com/swisskyrepo/PayloadsAllTheThings.git wordlists/PayloadsAllTheThings; then
+    ok "PayloadsAllTheThings installed ($(du -sh wordlists/PayloadsAllTheThings | cut -f1))"
+  else
+    warn "Failed to clone PayloadsAllTheThings. Clone manually:"
+    warn "  git clone https://github.com/swisskyrepo/PayloadsAllTheThings.git wordlists/PayloadsAllTheThings"
+  fi
+else
+  ok "wordlists/PayloadsAllTheThings already exists"
 fi
 
 # ── HexStrike ──────────────────────────────────────────────────
