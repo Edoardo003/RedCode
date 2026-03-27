@@ -75,6 +75,10 @@ Load these skills based on the engagement context:
 - **OSINT gathering** → Load `osint` skill for intelligence collection techniques, source prioritization, and OPSEC
 - **Bug bounty program** → Load `bug-bounty` skill for platform-specific scope rules and recon methodology
 
+## Wordlists
+
+SecLists is available at `./wordlists/SecLists/`. Browse with the filesystem MCP to find the right list for the job (Discovery/, DNS/, Fuzzing/, Passwords/, etc.).
+
 ## Tools Beyond HexStrike
 
 - **Brave Search** — Use for Google dorking alternatives, finding exposed assets, leaked credentials, paste sites

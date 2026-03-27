@@ -126,6 +126,20 @@ mkdir -p output/{recon/raw,scans/raw,exploits,pocs,reports}
 mkdir -p wordlists
 ok "output/ directories created"
 
+# ── Wordlists (SecLists) ──────────────────────────────────────
+
+if [ ! -d "wordlists/SecLists" ]; then
+  info "Cloning SecLists (shallow) into wordlists/..."
+  if git clone --depth 1 https://github.com/danielmiessler/SecLists.git wordlists/SecLists 2>/dev/null; then
+    ok "SecLists installed ($(du -sh wordlists/SecLists | cut -f1))"
+  else
+    warn "Failed to clone SecLists. Clone manually:"
+    warn "  git clone --depth 1 https://github.com/danielmiessler/SecLists.git wordlists/SecLists"
+  fi
+else
+  ok "wordlists/SecLists already exists"
+fi
+
 # ── HexStrike ──────────────────────────────────────────────────
 
 if [ ! -d "hexstrike-ai" ]; then

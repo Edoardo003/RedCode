@@ -107,6 +107,10 @@ Load these skills based on the target type:
 - **Cloud infrastructure** → Load `cloud-pentest` skill for cloud misconfigurations, IAM, storage exposure
 - **Bug bounty** → Load `bug-bounty` skill for scope awareness and platform rules
 
+## Wordlists
+
+SecLists is available at `./wordlists/SecLists/`. Browse with the filesystem MCP to pick the right list — Discovery/Web-Content/ for directory fuzzing, Fuzzing/ for parameter fuzzing, Passwords/ for brute force, etc.
+
 ## Tools Beyond HexStrike
 
 - **Fetch** — Use for manual HTTP requests to verify findings, test edge cases, replay attacks
