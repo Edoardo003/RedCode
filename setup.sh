@@ -348,6 +348,92 @@ set -a
 source .env 2>/dev/null || true
 set +a
 
+# ── Proxy / IP Rotation Setup ─────────────────────────────────
+
+echo ""
+echo -e "${CYAN}Proxy / IP Rotation Configuration${NC}"
+echo "RedCode can route scans through a proxy for IP rotation."
+echo ""
+echo "Options:"
+echo "  1) Tor (SOCKS5 on 127.0.0.1:9050) — free, slow, rotating IPs"
+echo "  2) Custom proxy (HTTP/SOCKS5) — your own or a rotating service"
+echo "  3) None — scan directly from this machine"
+echo ""
+echo -e "Choose [1/2/3] (default: ${YELLOW}3${NC}):"
+read -r proxy_choice
+proxy_choice="${proxy_choice:-3}"
+
+case "$proxy_choice" in
+  1)
+    info "Installing Tor and proxychains-ng..."
+    if command -v apt-get &>/dev/null; then
+      apt-get update -qq && apt-get install -y -qq tor proxychains4 2>/dev/null \
+        && ok "tor + proxychains4 installed" \
+        || warn "Failed — run: apt-get install tor proxychains4"
+    elif command -v pacman &>/dev/null; then
+      pacman -S --noconfirm tor proxychains-ng 2>/dev/null \
+        && ok "tor + proxychains-ng installed" \
+        || warn "Failed — run: pacman -S tor proxychains-ng"
+    elif command -v dnf &>/dev/null; then
+      dnf install -y tor proxychains-ng 2>/dev/null \
+        && ok "tor + proxychains-ng installed" \
+        || warn "Failed — run: dnf install tor proxychains-ng"
+    else
+      warn "Unknown package manager. Install tor and proxychains manually."
+    fi
+
+    # Enable and start Tor service
+    if command -v systemctl &>/dev/null; then
+      systemctl enable tor 2>/dev/null && systemctl start tor 2>/dev/null \
+        && ok "Tor service started" \
+        || warn "Could not start Tor service — run: systemctl start tor"
+    fi
+
+    # Configure proxychains for Tor
+    PROXYCHAINS_CONF="/etc/proxychains4.conf"
+    if [ ! -f "$PROXYCHAINS_CONF" ]; then
+      PROXYCHAINS_CONF="/etc/proxychains.conf"
+    fi
+
+    if [ -f "$PROXYCHAINS_CONF" ]; then
+      # Ensure dynamic_chain is set (comment strict_chain, uncomment dynamic_chain)
+      sed -i 's/^strict_chain/#strict_chain/' "$PROXYCHAINS_CONF" 2>/dev/null
+      sed -i 's/^#dynamic_chain/dynamic_chain/' "$PROXYCHAINS_CONF" 2>/dev/null
+      ok "proxychains configured for dynamic chain mode"
+    fi
+
+    # Set PROXY_URL in .env
+    sed -i "s|PROXY_URL=.*|PROXY_URL=socks5://127.0.0.1:9050|" .env
+    ok "PROXY_URL set to socks5://127.0.0.1:9050 (Tor)"
+
+    # Verify Tor is working
+    if command -v curl &>/dev/null && command -v tor &>/dev/null; then
+      sleep 2
+      tor_ip=$(curl -s --connect-timeout 5 --socks5-hostname 127.0.0.1:9050 https://api.ipify.org 2>/dev/null || echo "")
+      if [ -n "$tor_ip" ]; then
+        ok "Tor working — exit IP: $tor_ip"
+      else
+        warn "Tor installed but not responding yet. Check: systemctl status tor"
+      fi
+    fi
+    ;;
+  2)
+    echo ""
+    echo "Enter proxy URL (e.g., socks5://user:pass@host:port or http://host:port):"
+    read -r custom_proxy
+    if [ -n "$custom_proxy" ]; then
+      sed -i "s|PROXY_URL=.*|PROXY_URL=${custom_proxy}|" .env
+      ok "PROXY_URL set to $custom_proxy"
+    else
+      warn "No proxy URL entered — skipping"
+    fi
+    ;;
+  3|"")
+    info "No proxy — scanning directly from this machine"
+    sed -i "s|PROXY_URL=.*|PROXY_URL=|" .env
+    ;;
+esac
+
 if [ -n "${LM_STUDIO_URL:-}" ]; then
   base="${LM_STUDIO_URL%/v1}"
   base="${base%/}"
@@ -375,6 +461,9 @@ echo ""
 echo "Next steps:"
 echo "  1. Make sure LM Studio is running with qwen3.5-9b-uncensored-hauhaucs-aggressive"
 echo "  2. Run: opencode"
+if grep -q "PROXY_URL=socks5" .env 2>/dev/null; then
+  echo "  3. Tor proxy enabled — scans will rotate IPs automatically"
+fi
 echo ""
 echo "Quick start commands inside opencode:"
 echo "  /target example.com      — Start recon on a target"
