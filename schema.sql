@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS findings (
   evidence TEXT,
   cvss REAL,
   cwe TEXT,
-  confidence TEXT DEFAULT 'potential' CHECK(confidence IN ('confirmed','likely','potential')),
+  confidence TEXT DEFAULT 'potential' CHECK(confidence IN ('confirmed','likely','potential','unverified')),
   status TEXT DEFAULT 'new' CHECK(status IN ('new','confirmed','exploited','reported','fixed')),
   raw_path TEXT,
   created_at TEXT DEFAULT (datetime('now')),
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS scans (
   tool TEXT NOT NULL,
   command TEXT,
   started_at TEXT DEFAULT (datetime('now')),
-  completed_at TEXT,
+  ended_at TEXT,
   status TEXT DEFAULT 'running' CHECK(status IN ('running','completed','failed','cancelled')),
   output_path TEXT,
   finding_count INTEGER DEFAULT 0
@@ -43,11 +43,13 @@ CREATE TABLE IF NOT EXISTS credentials (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   target_id INTEGER REFERENCES targets(id),
   finding_id INTEGER REFERENCES findings(id),
-  type TEXT NOT NULL,
   username TEXT,
   password TEXT,
   token TEXT,
   url TEXT,
+  source TEXT,
+  phase TEXT,
+  verified INTEGER DEFAULT 0,
   notes TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );

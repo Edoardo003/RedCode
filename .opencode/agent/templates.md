@@ -185,10 +185,10 @@ Examples:
 
 ## Input Sources
 
-Read findings from:
+Read findings from per-target directories:
 
-- `output/scans/findings.json` — scanner structured output
-- `output/exploits/findings.json` — exploiter analysis
+- `output/{target}/scans/findings.json` — scanner structured output
+- `output/{target}/exploits/findings.json` — exploiter analysis
 - SQLite `findings` table — all persisted findings
 - Direct user description of a vulnerability
 
