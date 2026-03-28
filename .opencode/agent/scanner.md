@@ -56,18 +56,29 @@ The ONLY exception: the user explicitly says "do it manually" or "use curl". Wit
 
 ### Proxy / IP Rotation
 
-If `PROXY_URL` is set in the environment, pass it to HexStrike tools that support proxy flags:
+If proxy rotation is configured, get a fresh proxy for each tool call:
 
-- `nuclei_scan` → `-proxy $PROXY_URL`
-- `ffuf_scan` → `-x $PROXY_URL`
-- `gobuster_scan` → `--proxy $PROXY_URL`
-- `sqlmap_scan` → `--proxy=$PROXY_URL`
-- `nikto_scan` → `-useproxy $PROXY_URL`
+```bash
+# For rotating proxy lists (Webshare, etc.)
+if [ -n "${PROXY_ROTATE_SCRIPT:-}" ] && [ -x "$PROXY_ROTATE_SCRIPT" ]; then
+  CURRENT_PROXY=$($PROXY_ROTATE_SCRIPT)
+else
+  CURRENT_PROXY="${PROXY_URL:-}"
+fi
+```
+
+Then pass `$CURRENT_PROXY` to HexStrike tools that support proxy flags:
+
+- `nuclei_scan` → `-proxy $CURRENT_PROXY`
+- `ffuf_scan` → `-x $CURRENT_PROXY`
+- `gobuster_scan` → `--proxy $CURRENT_PROXY`
+- `sqlmap_scan` → `--proxy=$CURRENT_PROXY`
+- `nikto_scan` → `-useproxy $CURRENT_PROXY`
 - `hydra_scan` → check if proxy supported
 
-For `fetch` MCP requests, mention the proxy requirement in the request if applicable.
+**Important**: Get a NEW proxy for each major tool call (nuclei, ffuf, gobuster) to rotate IPs and avoid rate limiting/blocks.
 
-If `PROXY_URL` is not set, proceed without proxy — but note in the output that no proxy was used, in case the user wants IP rotation.
+If no proxy is configured, proceed without proxy flags — but note in the output that no proxy was used.
 
 ## Workflow
 

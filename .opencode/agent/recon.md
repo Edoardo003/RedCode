@@ -48,15 +48,26 @@ The ONLY exception: the user explicitly says "do it manually". Without that, too
 
 ### Proxy / IP Rotation
 
-If `PROXY_URL` is set in the environment, pass it to HexStrike tools that support proxy flags:
+If proxy rotation is configured, get a fresh proxy for each tool call:
 
-- `nmap_scan` → `--proxies $PROXY_URL`
+```bash
+# For rotating proxy lists (Webshare, etc.)
+if [ -n "${PROXY_ROTATE_SCRIPT:-}" ] && [ -x "$PROXY_ROTATE_SCRIPT" ]; then
+  CURRENT_PROXY=$($PROXY_ROTATE_SCRIPT)
+else
+  CURRENT_PROXY="${PROXY_URL:-}"
+fi
+```
+
+Then pass `$CURRENT_PROXY` to HexStrike tools:
+
+- `nmap_scan` → `--proxies $CURRENT_PROXY`
 - `amass_enum` → check proxy support
 - `masscan_scan` → `--adapter-port` or source routing as applicable
 
-For `fetch` MCP requests, mention the proxy requirement if applicable.
+**Important**: Get a NEW proxy for each major tool call (nmap, amass) to rotate IPs.
 
-If `PROXY_URL` is not set, proceed without proxy — but note it in the output.
+If no proxy is configured, proceed without proxy flags — but note it in the output.
 
 ## Workflow
 
