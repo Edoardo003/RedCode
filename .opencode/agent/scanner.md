@@ -103,25 +103,13 @@ The ONLY exception: the user explicitly says "do it manually" or "use curl". Wit
 
 ### Proxy / IP Rotation
 
-If proxy rotation is configured, get a fresh proxy for each tool call:
+If `PROXY_URL` is set in the environment, pass it to every HexStrike tool call. Webshare rotating proxy auto-assigns a different IP per request — no rotation script needed.
 
-```bash
-if [ -n "${PROXY_ROTATE_SCRIPT:-}" ] && [ -x "$PROXY_ROTATE_SCRIPT" ]; then
-  CURRENT_PROXY=$($PROXY_ROTATE_SCRIPT)
-else
-  CURRENT_PROXY="${PROXY_URL:-}"
-fi
-```
-
-Then pass `$CURRENT_PROXY` to HexStrike tools that support proxy flags:
-
-- `nuclei_scan` -> `-proxy $CURRENT_PROXY`
-- `ffuf_scan` -> `-x $CURRENT_PROXY`
-- `gobuster_scan` -> `--proxy $CURRENT_PROXY`
-- `sqlmap_scan` -> `--proxy=$CURRENT_PROXY`
-- `nikto_scan` -> `-useproxy $CURRENT_PROXY`
-
-**Important**: Get a NEW proxy for each major tool call to rotate IPs and avoid rate limiting/blocks.
+- `nuclei_scan` -> `-proxy $PROXY_URL`
+- `ffuf_scan` -> `-x $PROXY_URL`
+- `gobuster_scan` -> `--proxy $PROXY_URL`
+- `sqlmap_scan` -> `--proxy=$PROXY_URL`
+- `nikto_scan` -> `-useproxy $PROXY_URL`
 
 If no proxy is configured, proceed without proxy flags — but note it in the output.
 

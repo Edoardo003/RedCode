@@ -356,13 +356,12 @@ echo "RedCode can route scans through a proxy for IP rotation."
 echo ""
 echo "Options:"
 echo "  1) Tor (SOCKS5 on 127.0.0.1:9050) — free, slow, rotating IPs"
-echo "  2) Custom proxy (HTTP/SOCKS5) — your own or a rotating service"
-echo "  3) Proxy list file (Webshare format) — automatic IP rotation"
-echo "  4) None — scan directly from this machine"
+echo "  2) Custom proxy — Webshare rotating, Burp, or any HTTP/SOCKS5 proxy"
+echo "  3) None — scan directly from this machine"
 echo ""
-echo -e "Choose [1/2/3/4] (default: ${YELLOW}4${NC}):"
+echo -e "Choose [1/2/3] (default: ${YELLOW}3${NC}):"
 read -r proxy_choice
-proxy_choice="${proxy_choice:-4}"
+proxy_choice="${proxy_choice:-3}"
 
 case "$proxy_choice" in
   1)
@@ -420,85 +419,30 @@ case "$proxy_choice" in
     ;;
   2)
     echo ""
-    echo "Enter proxy URL (e.g., socks5://user:pass@host:port or http://host:port):"
+    echo "Enter proxy URL. Examples:"
+    echo "  Webshare rotating: http://user-rotate:pass@p.webshare.io:80"
+    echo "  Burp/ZAP:         http://127.0.0.1:8080"
+    echo "  SOCKS5:           socks5://user:pass@host:port"
+    echo ""
+    echo "Proxy URL:"
     read -r custom_proxy
     if [ -n "$custom_proxy" ]; then
       sed -i "s|PROXY_URL=.*|PROXY_URL=${custom_proxy}|" .env
       ok "PROXY_URL set to $custom_proxy"
+
+      # Test the proxy
+      info "Testing proxy..."
+      proxy_ip=$(curl -s --connect-timeout 5 --proxy "$custom_proxy" https://api.ipify.org 2>/dev/null || echo "failed")
+      if [ "$proxy_ip" != "failed" ] && [ -n "$proxy_ip" ]; then
+        ok "Proxy working — exit IP: $proxy_ip"
+      else
+        warn "Proxy test failed — check URL and credentials"
+      fi
     else
       warn "No proxy URL entered — skipping"
     fi
     ;;
-  3)
-    echo ""
-    echo "Enter path to proxy list file (format: IP:PORT:USER:PASS, one per line):"
-    echo "Example: /home/user/webshare_proxies.txt"
-    read -r proxy_file
-    
-    if [ -n "$proxy_file" ] && [ -f "$proxy_file" ]; then
-      # Validate format
-      if head -1 "$proxy_file" | grep -q '^[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+:[0-9]\+:[^:]\+:[^:]\+$'; then
-        proxy_count=$(wc -l < "$proxy_file")
-        ok "Found $proxy_count proxies in $proxy_file"
-        
-        # Create proxy rotation script
-        info "Installing proxy rotation script..."
-        cat > /usr/local/bin/redcode-proxy-rotate << 'PROXY_SCRIPT'
-#!/bin/bash
-# RedCode Proxy Rotator - picks random proxy from list
-set -euo pipefail
-
-PROXY_FILE="${PROXY_FILE:-}"
-if [ -z "$PROXY_FILE" ] || [ ! -f "$PROXY_FILE" ]; then
-    echo "http://direct" # fallback to direct
-    exit 0
-fi
-
-# Pick random line from file
-TOTAL=$(wc -l < "$PROXY_FILE")
-if [ "$TOTAL" -eq 0 ]; then
-    echo "http://direct"
-    exit 0
-fi
-
-LINE_NUM=$(($RANDOM % $TOTAL + 1))
-PROXY_LINE=$(sed -n "${LINE_NUM}p" "$PROXY_FILE")
-
-# Parse IP:PORT:USER:PASS format
-IFS=':' read -r ip port user pass <<< "$PROXY_LINE"
-echo "http://${user}:${pass}@${ip}:${port}"
-PROXY_SCRIPT
-
-        chmod +x /usr/local/bin/redcode-proxy-rotate
-        
-        # Set environment variables
-        echo "PROXY_FILE=\"$proxy_file\"" >> .env
-        echo "PROXY_ROTATE_SCRIPT=/usr/local/bin/redcode-proxy-rotate" >> .env
-        sed -i "s|PROXY_URL=.*|PROXY_URL=\$(redcode-proxy-rotate)|" .env
-        
-        ok "Proxy rotation configured with $proxy_count endpoints"
-        
-        # Test one proxy
-        info "Testing random proxy..."
-        export PROXY_FILE="$proxy_file"
-        test_proxy=$(/usr/local/bin/redcode-proxy-rotate)
-        if [ "$test_proxy" != "http://direct" ]; then
-          proxy_ip=$(curl -s --connect-timeout 5 --proxy "$test_proxy" https://api.ipify.org 2>/dev/null || echo "failed")
-          if [ "$proxy_ip" != "failed" ] && [ -n "$proxy_ip" ]; then
-            ok "Test proxy working — exit IP: $proxy_ip"
-          else
-            warn "Test proxy failed — check credentials and format"
-          fi
-        fi
-      else
-        warn "Invalid format in $proxy_file. Expected: IP:PORT:USER:PASS"
-        warn "Example: 1.2.3.4:8080:username:password"
-      fi
-    else
-      warn "File not found or empty — skipping proxy setup"
-    fi
-    ;;
-  4|"")
+  3|"")
     info "No proxy — scanning directly from this machine"
     sed -i "s|PROXY_URL=.*|PROXY_URL=|" .env
     ;;

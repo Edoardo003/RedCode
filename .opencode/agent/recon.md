@@ -65,23 +65,11 @@ The ONLY exception: the user explicitly says "do it manually". Without that, too
 
 ### Proxy / IP Rotation
 
-If proxy rotation is configured, get a fresh proxy for each tool call:
+If `PROXY_URL` is set in the environment, pass it to every HexStrike tool call. Webshare rotating proxy auto-assigns a different IP per request — no rotation script needed.
 
-```bash
-if [ -n "${PROXY_ROTATE_SCRIPT:-}" ] && [ -x "$PROXY_ROTATE_SCRIPT" ]; then
-  CURRENT_PROXY=$($PROXY_ROTATE_SCRIPT)
-else
-  CURRENT_PROXY="${PROXY_URL:-}"
-fi
-```
-
-Then pass `$CURRENT_PROXY` to HexStrike tools:
-
-- `nmap_scan` -> `--proxies $CURRENT_PROXY`
+- `nmap_scan` -> `--proxies $PROXY_URL`
 - `amass_enum` -> check proxy support
 - `masscan_scan` -> `--adapter-port` or source routing as applicable
-
-**Important**: Get a NEW proxy for each major tool call to rotate IPs.
 
 If no proxy is configured, proceed without proxy flags — but note it in the output.
 
