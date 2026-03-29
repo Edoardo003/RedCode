@@ -105,15 +105,16 @@ After writing the PoC file, **execute it in --check mode** to verify it works:
 
 ### In Aggressive Mode (MODE: AGGRESSIVE in handoff)
 
-**MANDATORY**: Execute the PoC after writing it.
+**MANDATORY**: Execute the PoC after writing it. You have up to 25 steps — use them.
 
 1. Save the PoC to `output/pocs/FIND-XXX_type_endpoint.py`
 2. Execute via HexStrike: `execute_python_script` with the PoC script using `--check --target [target_url]`
 3. Analyze the output:
    - **If --check succeeds** (vulnerability confirmed): report "PoC VERIFIED — vulnerability confirmed"
-   - **If --check fails** (error or false negative): analyze the error, fix the script, retry ONCE
-   - **If retry fails**: report "PoC written but verification failed: [error]. Manual testing recommended."
+   - **If --check fails** (error or false negative): analyze the error, fix the script, retry (up to 3 attempts)
+   - **If all retries fail**: report "PoC written but verification failed: [error]. Manual testing recommended."
 4. Update SQLite finding status based on verification result
+5. **DO NOT ask questions or present options** — just write, execute, fix, report
 
 ### In Normal Mode
 

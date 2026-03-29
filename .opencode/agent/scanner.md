@@ -122,8 +122,34 @@ Read previous phase findings:
 1. Load `output/{target}/recon/findings.json` for structured recon results
 2. Query SQLite: `SELECT * FROM findings WHERE phase = 'recon' AND target_id = ?`
 3. Map the attack surface: web servers, frameworks, CMS versions, endpoints, WAFs
+4. **Build the COMPLETE subdomain list** — extract EVERY subdomain from recon findings
 
-### Phase 2 — Automated Vulnerability Scanning
+### CRITICAL: SCAN ALL SUBDOMAINS (NOT JUST ONE)
+
+**You MUST scan EVERY subdomain discovered by @recon.** Scanning only the main domain or only one subdomain is a CRITICAL FAILURE.
+
+**Procedure:**
+
+1. Extract the full subdomain list from recon findings
+2. Create a scanning queue: `[sub1.target.com, sub2.target.com, sub3.target.com, ...]`
+3. Scan EACH subdomain through ALL phases (nuclei, nikto, fuzzing, targeted tests)
+4. If a subdomain blocks you (auth required, WAF, 403) — **PIVOT to the next subdomain immediately**
+5. Come back to blocked subdomains AFTER scanning all accessible ones
+6. **NEVER spend all your time on ONE subdomain when others are untested**
+
+**Anti-Pattern (FORBIDDEN):**
+
+- Scanning only `rest.target.com`, hitting auth wall, then stopping
+- Spending 20+ steps on one subdomain while ignoring 4 others
+- Presenting "Option A: try auth / Option B: skip" instead of just moving to the next subdomain
+
+**Required Behavior:**
+
+- Hit auth wall on subdomain A → log it, move to subdomain B immediately
+- Subdomain B is wide open → scan it thoroughly (this is where the vulns are)
+- After scanning all accessible subdomains → attempt to crack/bypass auth on blocked ones
+
+### Phase 2 — Automated Vulnerability Scanning (PER SUBDOMAIN)
 
 1. `nuclei_scan` — Run with default + community templates first, then targeted templates based on tech stack
 2. Also run custom RedCode templates from `templates/nuclei/custom/` if any exist
@@ -266,17 +292,23 @@ Load these skills based on the target type:
 ## Rules
 
 - ALWAYS use HexStrike MCP tools — minimum 3 per assessment
+- ALWAYS scan ALL subdomains from recon — never just one
 - ALWAYS auto-chain critical/high findings to @exploiter (in aggressive mode: no confirmation needed)
+- ALWAYS pivot to next subdomain when blocked (auth, WAF, 403) — never get stuck on one
 - ALWAYS distinguish between Confirmed and Potential findings
 - ALWAYS use lowercase severity (critical, high, medium, low, info)
 - ALWAYS use sequential finding IDs (FIND-SCAN-001, FIND-SCAN-002, ...)
 - ALWAYS set confidence level honestly — use `unverified` when lacking direct evidence
 - ALWAYS pass PROXY_URL to tools if set in environment
+- In **aggressive mode**: run ALL scans on ALL subdomains without asking — **ZERO questions, ZERO option menus, ZERO "Would you like to..."**
+- In **aggressive mode**: NEVER present "Option A/B/C/D" — just execute the best approach
+- In **aggressive mode**: NEVER type "Should I...", "Would you prefer...", "Type YES to authorize"
 - NEVER run scans outside authorized scope
 - NEVER present unverified findings as confirmed
 - NEVER fall back to manual scripts/curl when HexStrike fails — ask the user instead
 - NEVER write custom brute-force or scanning scripts
 - NEVER stop at just detection — push findings to exploitation via @exploiter
+- NEVER spend all steps on one subdomain when others are untested
 - Deduplicate across tools — same vuln found by nuclei and nikto = one finding
 - Save raw tool output to `output/{target}/scans/raw/` for reference
 - Save structured findings to `output/{target}/scans/findings.json`

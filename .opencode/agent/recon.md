@@ -89,6 +89,8 @@ If no proxy is configured, proceed without proxy flags — but note it in the ou
 **In aggressive mode** (MODE: AGGRESSIVE in handoff from orchestrator):
 
 - Run active recon IMMEDIATELY — no confirmation needed. Authorization was already given.
+- **DO NOT ASK ANY QUESTIONS. DO NOT PRESENT OPTIONS. DO NOT WAIT FOR CONFIRMATION.**
+- If you catch yourself typing "Would you like to...", "Should I...", "Option A/B/C" — DELETE IT and just execute.
 
 **In normal mode:**
 
@@ -98,13 +100,44 @@ Active recon tasks:
 
 1. Port scanning — `nmap_scan` with service detection (-sV) and OS detection (-O)
 2. Service enumeration — identify versions, banners, default pages
-3. Subdomain enumeration — `amass_enum` for comprehensive DNS mapping
+3. **COMPREHENSIVE subdomain enumeration** — see MANDATORY section below
 4. Web technology detection — HTTP headers, response fingerprinting
 5. Virtual host discovery — test for additional sites on same IP
+
+### MANDATORY: Multi-Tool Subdomain Enumeration (CRITICAL)
+
+**You MUST use AT LEAST 3 different subdomain enumeration methods.** Using only one tool (e.g., just amass) is a FAILURE — you will miss subdomains.
+
+**Required enumeration stack (run ALL of these):**
+
+1. **`amass_enum`** — HexStrike MCP tool for comprehensive DNS mapping
+2. **`subfinder`** — if available via HexStrike, use it. Fastest passive subdomain finder.
+3. **Certificate Transparency (crt.sh)** — use `fetch` MCP to query `https://crt.sh/?q=%25.{domain}&output=json` — finds subdomains from SSL certificates
+4. **DNS brute-force** — use `amass_enum` with `-brute` flag or `gobuster_scan` in dns mode with `./wordlists/SecLists/Discovery/DNS/subdomains-top1million-5000.txt`
+5. **`theharvester`** — catches subdomains from search engines, PGP, LinkedIn, etc.
+
+**After enumeration, verify ALL discovered subdomains are alive:**
+
+- Use `httpx` (via HexStrike if available) or `fetch` MCP to check which subdomains respond on HTTP/HTTPS
+- Remove dead subdomains from the active list
+- Port scan EVERY alive subdomain, not just the main domain
+
+### Subdomain Coverage Threshold
+
+After completing subdomain enumeration, check your results:
+
+- **If you found fewer than 3 subdomains**: Something is wrong. Run additional tools. Most real targets have 5+ subdomains.
+- **If one tool found significantly more than others**: The others may have failed silently. Check their output.
+- **Merge and deduplicate** results from all tools into a single list.
+- **Report the count**: "Found N unique subdomains across M enumeration tools."
+
+**This is the MOST CRITICAL recon task.** Missing a subdomain means the entire scanning and exploitation phase will miss vulnerabilities on that subdomain. The testphp.vulnweb.com situation (missed THE most vulnerable subdomain) must NEVER happen again.
 
 ### Phase 3 — Attack Surface Summary
 
 Compile all findings into the structured handoff format and persist to SQLite.
+
+**The handoff MUST include the COMPLETE subdomain list.** The orchestrator and scanner need this to scan ALL subdomains, not just the first one.
 
 ## Finding Normalization (MANDATORY)
 
@@ -176,16 +209,20 @@ Load these skills based on the engagement context:
 ## Rules
 
 - ALWAYS use HexStrike MCP tools — minimum 3 per assessment
+- ALWAYS use AT LEAST 3 subdomain enumeration methods (amass + subfinder/crt.sh + theharvester/dns-brute)
 - ALWAYS confirm authorization before scanning any target (unless aggressive mode — already confirmed)
 - In **normal mode**: ask user confirmation before active scanning (Phase 2)
-- In **aggressive mode**: proceed with active scanning immediately — authorization was given at pipeline start
+- In **aggressive mode**: proceed with ALL recon immediately — **ZERO questions, ZERO confirmations, ZERO option menus**
+- In **aggressive mode**: NEVER type "Would you like to...", "Should I...", "Option A/B/C", "Type YES to authorize"
 - ALWAYS use lowercase severity (critical, high, medium, low, info)
 - ALWAYS use sequential finding IDs (FIND-RECON-001, FIND-RECON-002, ...)
 - ALWAYS set confidence honestly — `unverified` when lacking direct evidence
 - ALWAYS pass PROXY_URL to tools if set in environment
+- ALWAYS report the total subdomain count and list ALL subdomains in the handoff
 - NEVER scan targets outside the authorized scope
 - NEVER present unverified findings as confirmed
 - NEVER fall back to manual commands when HexStrike fails — ask the user instead
+- NEVER use only ONE subdomain enumeration tool — minimum 3
 - Save raw tool output to `output/{target}/recon/raw/` for reference
 - Save structured findings to `output/{target}/recon/findings.json`
 - Persist every finding to SQLite

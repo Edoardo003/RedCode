@@ -93,18 +93,40 @@ info "Updating package lists..."
 apt-get update -qq
 
 # ── Go toolchain (needed for many security tools) ─────────────
+# IMPORTANT: apt's golang-go gives Go 1.18-1.19 which is TOO OLD.
+# nuclei, httpx, katana, subfinder, ffuf, dalfox all need Go 1.21+.
+# Install from go.dev official binary for Go 1.22+.
 
-if ! command -v go &>/dev/null; then
-  info "Installing Go toolchain..."
-  apt-get install -y -qq golang-go 2>/dev/null || {
-    warn "Could not install Go via apt. Trying snap..."
-    snap install go --classic 2>/dev/null || warn "Go not installed — Go-based tools will be skipped"
-  }
-fi
+GO_VERSION="1.23.4"
 
 if command -v go &>/dev/null; then
+  CURRENT_GO=$(go version 2>/dev/null | grep -oP 'go\K[0-9]+\.[0-9]+' || echo "0.0")
+  MAJOR=$(echo "$CURRENT_GO" | cut -d. -f1)
+  MINOR=$(echo "$CURRENT_GO" | cut -d. -f2)
+  if [ "$MAJOR" -ge 1 ] && [ "$MINOR" -ge 22 ]; then
+    ok "Go $(go version 2>/dev/null | awk '{print $3}') (already installed, version OK)"
+  else
+    warn "Go $CURRENT_GO is too old (need 1.22+). Upgrading..."
+    rm -rf /usr/local/go
+    info "Downloading Go ${GO_VERSION} from go.dev..."
+    wget -q "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -O /tmp/go.tar.gz 2>/dev/null \
+      && tar -C /usr/local -xzf /tmp/go.tar.gz 2>/dev/null \
+      && rm -f /tmp/go.tar.gz \
+      && ok "Go ${GO_VERSION} (upgraded from go.dev)" \
+      || { warn "Go upgrade failed"; }
+  fi
+else
+  info "Installing Go ${GO_VERSION} from go.dev..."
+  wget -q "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -O /tmp/go.tar.gz 2>/dev/null \
+    && tar -C /usr/local -xzf /tmp/go.tar.gz 2>/dev/null \
+    && rm -f /tmp/go.tar.gz \
+    && ok "Go ${GO_VERSION} (installed from go.dev)" \
+    || { warn "Go installation failed. Go-based tools will be skipped."; }
+fi
+
+if [ -d "/usr/local/go/bin" ]; then
   export GOPATH="${GOPATH:-/root/go}"
-  export PATH="$PATH:$GOPATH/bin:/usr/local/go/bin"
+  export PATH="/usr/local/go/bin:$GOPATH/bin:$PATH"
   ok "Go $(go version 2>/dev/null | awk '{print $3}')"
 fi
 

@@ -38,24 +38,29 @@ After "yes": **zero more confirmations.** Every phase auto-progresses.
 
 **Phase 1 — RECONNAISSANCE** (auto)
 
-Delegate to @recon with: "MODE: AGGRESSIVE — run passive + active recon immediately, no confirmation needed."
+Delegate to @recon with: "MODE: AGGRESSIVE — run passive + active recon immediately, no confirmation needed. Use AT LEAST 3 subdomain enumeration methods (amass, subfinder/crt.sh, theharvester/dns-brute). Report ALL discovered subdomains."
 
 - Passive: DNS, WHOIS, certificate transparency, tech fingerprinting
-- Active: port scanning, subdomain enumeration, service detection
-- -> Auto-progress to Phase 2 when complete
+- Active: port scanning, subdomain enumeration (3+ tools), service detection
+- **VERIFY**: recon must return a COMPLETE subdomain list
+- If fewer than 3 subdomains found, send @recon back for additional enumeration
+- -> Auto-progress to Phase 2 when complete, passing FULL subdomain list
 
 **Phase 2 — VULNERABILITY SCANNING** (auto)
 
-Delegate to @scanner with: "MODE: AGGRESSIVE — run ALL scan types, auto-chain critical/high to exploitation."
+Delegate to @scanner with: "MODE: AGGRESSIVE — scan ALL of these subdomains: [full list from recon]. Run ALL scan types on EVERY subdomain. If blocked on one, pivot to the next immediately. Auto-chain critical/high to exploitation."
 
+- Scan EVERY subdomain, not just the first one
 - Nuclei, nikto, gobuster/ffuf, sqlmap detection, dalfox, commix, hydra on login pages
-- ALL vulnerability classes tested — no asking
+- ALL vulnerability classes tested — no asking, no option menus
+- If blocked on a subdomain → pivot immediately, come back later
 - Critical/high findings auto-chained to @exploiter
+- **VERIFY**: scanner must report findings across ALL subdomains, not just one
 - -> Auto-progress to Phase 3 when complete
 
 **Phase 3 — ACTIVE EXPLOITATION** (auto)
 
-Delegate to @exploiter with: "MODE: AGGRESSIVE — exploit ALL critical/high findings without confirmation."
+Delegate to @exploiter with: "MODE: AGGRESSIVE — exploit ALL critical/high findings across ALL subdomains without confirmation. Pivot when blocked. Cover every subdomain."
 
 - SQLi: `sqlmap_scan --dump --level=5 --risk=3 --batch`
 - RCE: `metasploit_run` actual exploit modules
@@ -64,6 +69,7 @@ Delegate to @exploiter with: "MODE: AGGRESSIVE — exploit ALL critical/high fin
 - Command Injection: `commix` for RCE proof
 - LFI: `dotdotpwn_scan` for file extraction
 - SSRF: internal network probing, cloud metadata
+- Exploit findings across ALL subdomains, not just one
 - Credentials found -> persist to SQLite, try immediately, trigger authenticated re-scan
 - -> Auto-progress to Phase 4 when complete
 
@@ -79,10 +85,11 @@ Delegate to @poc with each exploited finding: "MODE: AGGRESSIVE — write AND ex
 
 **Phase 5 — REPORTING** (auto)
 
-Delegate to @reporter: "Compile full report with all findings, exploitations, and PoC results."
+Delegate to @reporter: "Compile full report with all findings, exploitations, and PoC results across ALL subdomains."
 
 - Ask format preference ONLY if not specified: hackerone / bugcrowd / generic
 - Include all exploitation evidence, extracted data, working payloads
+- Include coverage summary: which subdomains were tested, what was found on each
 - Save to `output/{target}/reports/`
 
 ---
@@ -142,8 +149,13 @@ Use @reporter to compile the final report:
 
 ## Critical Rules
 
-- In aggressive mode: ONE confirmation at start, then ZERO confirmations
+- In aggressive mode: ONE confirmation at start, then ZERO confirmations — NO EXCEPTIONS
+- In aggressive mode: NEVER present option menus or ask questions after initial authorization
+- In aggressive mode: if an agent asks a question or presents options, REJECT and send back with "AGGRESSIVE MODE. Execute without questions."
 - In normal mode: confirm before each phase
+- ALWAYS scan and exploit ALL subdomains, not just the main domain
+- ALWAYS verify each phase covered ALL subdomains before advancing
+- NEVER accept "blocked" or "auth required" as a reason to stop the entire pipeline — agents must PIVOT
 - NEVER scan or exploit outside authorized scope
 - Save progress after each phase to output/ so work is not lost
 - If any phase reveals scope concerns, STOP and ask regardless of mode
