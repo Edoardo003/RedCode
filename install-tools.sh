@@ -168,14 +168,15 @@ try_install smbmap     pip3 install --quiet smbmap
 try_install responder  pip3 install --quiet Responder
 try_install netexec    pip3 install --quiet netexec
 
-# RustScan (Rust binary — NOT a Go tool, install via deb)
+# RustScan (Rust binary — NOT a Go tool, install via deb from GitHub)
 if ! command -v rustscan &>/dev/null; then
-  info "Installing RustScan via deb..."
-  wget -q "https://github.com/RustScan/RustScan/releases/latest/download/rustscan_2.3.0_amd64.deb" -O /tmp/rustscan.deb 2>/dev/null \
-    && dpkg -i /tmp/rustscan.deb 2>/dev/null \
-    && ok "rustscan (deb)" && installed=$((installed + 1)) \
+  info "Installing RustScan via deb (2.4.1)..."
+  wget -q "https://github.com/bee-san/RustScan/releases/download/2.4.1/rustscan.deb.zip" -O /tmp/rustscan.deb.zip 2>/dev/null \
+    && unzip -o /tmp/rustscan.deb.zip -d /tmp/rustscan_deb/ 2>/dev/null \
+    && dpkg -i /tmp/rustscan_deb/*.deb 2>/dev/null \
+    && ok "rustscan (deb 2.4.1)" && installed=$((installed + 1)) \
     || { warn "Failed: rustscan"; failed=$((failed + 1)); }
-  rm -f /tmp/rustscan.deb
+  rm -rf /tmp/rustscan.deb.zip /tmp/rustscan_deb
 else
   ok "rustscan (already installed)"
   skipped=$((skipped + 1))

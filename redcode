@@ -14,8 +14,14 @@ fi
 : "${REDCODE_DB:=$DIR/redcode.db}"
 : "${BRAVE_API_KEY:=}"
 : "${PROXY_URL:=}"
-: "${PROXY_FILE:=}"
-: "${PROXY_ROTATE_SCRIPT:=}"
-export LM_STUDIO_URL HEXSTRIKE_URL REDCODE_DB BRAVE_API_KEY PROXY_URL PROXY_FILE PROXY_ROTATE_SCRIPT
+export LM_STUDIO_URL HEXSTRIKE_URL REDCODE_DB BRAVE_API_KEY PROXY_URL
+
+# Export standard proxy env vars so tools that read http_proxy/https_proxy get proxy support for free
+if [ -n "$PROXY_URL" ]; then
+  export http_proxy="$PROXY_URL"
+  export https_proxy="$PROXY_URL"
+  export HTTP_PROXY="$PROXY_URL"
+  export HTTPS_PROXY="$PROXY_URL"
+fi
 
 exec opencode "$@"

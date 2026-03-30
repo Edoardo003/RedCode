@@ -105,11 +105,18 @@ The ONLY exception: the user explicitly says "do it manually" or "use curl". Wit
 
 If `PROXY_URL` is set in the environment, pass it to every HexStrike tool call. Webshare rotating proxy auto-assigns a different IP per request — no rotation script needed.
 
-- `nuclei_scan` -> `-proxy $PROXY_URL`
+- `nuclei_scan` -> `--proxy $PROXY_URL`
 - `ffuf_scan` -> `-x $PROXY_URL`
 - `gobuster_scan` -> `--proxy $PROXY_URL`
 - `sqlmap_scan` -> `--proxy=$PROXY_URL`
 - `nikto_scan` -> `-useproxy $PROXY_URL`
+- `katana` -> `--proxy $PROXY_URL`
+- `dalfox` -> `--proxy $PROXY_URL`
+- `wfuzz` -> `--proxy $PROXY_URL`
+
+**Important**: The proxy URL must NOT have a trailing slash. Use `http://user:pass@host:port` not `http://user:pass@host:port/`.
+
+Tools without native proxy support (nmap, hydra) get proxy automatically via `http_proxy`/`https_proxy` env vars exported by the `redcode` launcher. For full TCP-level proxying of nmap/hydra, use `proxychains`.
 
 If no proxy is configured, proceed without proxy flags — but note it in the output.
 

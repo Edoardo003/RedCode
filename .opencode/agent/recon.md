@@ -67,11 +67,15 @@ The ONLY exception: the user explicitly says "do it manually". Without that, too
 
 If `PROXY_URL` is set in the environment, pass it to every HexStrike tool call. Webshare rotating proxy auto-assigns a different IP per request — no rotation script needed.
 
-- `nmap_scan` -> `--proxies $PROXY_URL`
-- `amass_enum` -> check proxy support
-- `masscan_scan` -> `--adapter-port` or source routing as applicable
+- `subfinder` -> `--proxy $PROXY_URL`
+- `httpx` -> `--proxy $PROXY_URL`
+- `amass_enum` -> uses `http_proxy` env var (auto-exported by redcode launcher)
+- `nmap_scan` -> does NOT support HTTP proxies directly. Use `proxychains nmap ...` for TCP-level proxying
+- `masscan_scan` -> no proxy support; runs direct
 
-If no proxy is configured, proceed without proxy flags — but note it in the output.
+**Important**: The proxy URL must NOT have a trailing slash. Use `http://user:pass@host:port` not `http://user:pass@host:port/`.
+
+If no proxy is configured, proceed without proxy flags — but note it in the output. Most tools also respect `http_proxy`/`https_proxy` env vars which the `redcode` launcher auto-exports when `PROXY_URL` is set.
 
 ## Workflow
 
