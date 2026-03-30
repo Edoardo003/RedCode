@@ -59,15 +59,20 @@ go_install() {
   if ! command -v go &>/dev/null; then
     warn "Skipped $name (go not installed)"
     failed=$((failed + 1))
+    return 1
+  fi
+  info "go install $name ..."
+  go install "$pkg" 2>&1 | tail -5 || true
+  local bin="${GOPATH:-/root/go}/bin/$name"
+  if [ -f "$bin" ]; then
+    ln -sf "$bin" "/usr/local/bin/$name"
+    ok "$name (go install → symlinked to /usr/local/bin)"
+    installed=$((installed + 1))
     return 0
   fi
-  if go install "$pkg" &>/dev/null 2>&1; then
-    ok "$name (go install)"
-    installed=$((installed + 1))
-  else
-    warn "Failed: $name (go install $pkg)"
-    failed=$((failed + 1))
-  fi
+  warn "Failed: $name (binary not produced by go install $pkg)"
+  failed=$((failed + 1))
+  return 1
 }
 
 pip_install() {
@@ -163,21 +168,23 @@ try_install smbmap     pip3 install --quiet smbmap
 try_install responder  pip3 install --quiet Responder
 try_install netexec    pip3 install --quiet netexec
 
-# Go tools
-go_install rustscan    "github.com/RustScan/RustScan@latest" 2>/dev/null || {
-  if ! command -v rustscan &>/dev/null; then
-    info "Installing RustScan via deb..."
-    wget -q "https://github.com/RustScan/RustScan/releases/latest/download/rustscan_2.3.0_amd64.deb" -O /tmp/rustscan.deb 2>/dev/null \
-      && dpkg -i /tmp/rustscan.deb 2>/dev/null \
-      && ok "rustscan (deb)" && installed=$((installed + 1)) \
-      || { warn "Failed: rustscan"; failed=$((failed + 1)); }
-    rm -f /tmp/rustscan.deb
-  fi
-}
+# RustScan (Rust binary — NOT a Go tool, install via deb)
+if ! command -v rustscan &>/dev/null; then
+  info "Installing RustScan via deb..."
+  wget -q "https://github.com/RustScan/RustScan/releases/latest/download/rustscan_2.3.0_amd64.deb" -O /tmp/rustscan.deb 2>/dev/null \
+    && dpkg -i /tmp/rustscan.deb 2>/dev/null \
+    && ok "rustscan (deb)" && installed=$((installed + 1)) \
+    || { warn "Failed: rustscan"; failed=$((failed + 1)); }
+  rm -f /tmp/rustscan.deb
+else
+  ok "rustscan (already installed)"
+  skipped=$((skipped + 1))
+fi
 
 go_install amass       "github.com/owasp-amass/amass/v4/...@master"
 go_install subfinder   "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"
 go_install nuclei      "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"
+go_install httpx       "github.com/projectdiscovery/httpx/cmd/httpx@latest"
 
 pip_install autorecon  "autorecon"
 
@@ -206,13 +213,23 @@ pip_install arjun      "arjun"
 pip_install paramspider "paramspider"
 pip_install wafw00f    "wafw00f"
 
-go_install feroxbuster "github.com/epi052/feroxbuster@latest" 2>/dev/null || {
-  if ! command -v feroxbuster &>/dev/null; then
-    apt-get install -y -qq feroxbuster 2>/dev/null \
-      && ok "feroxbuster (apt)" && installed=$((installed + 1)) \
-      || { warn "Failed: feroxbuster"; failed=$((failed + 1)); }
-  fi
-}
+# feroxbuster (Rust binary — NOT a Go tool, install via apt or GitHub release)
+if ! command -v feroxbuster &>/dev/null; then
+  apt-get install -y -qq feroxbuster 2>/dev/null \
+    && ok "feroxbuster (apt)" && installed=$((installed + 1)) \
+    || {
+      info "Installing feroxbuster from GitHub..."
+      wget -q "https://github.com/epi052/feroxbuster/releases/latest/download/x86_64-linux-feroxbuster.tar.gz" -O /tmp/ferox.tar.gz 2>/dev/null \
+        && tar -xzf /tmp/ferox.tar.gz -C /usr/local/bin/ feroxbuster 2>/dev/null \
+        && chmod +x /usr/local/bin/feroxbuster 2>/dev/null \
+        && ok "feroxbuster (github release)" && installed=$((installed + 1)) \
+        || { warn "Failed: feroxbuster"; failed=$((failed + 1)); }
+      rm -f /tmp/ferox.tar.gz
+    }
+else
+  ok "feroxbuster (already installed)"
+  skipped=$((skipped + 1))
+fi
 
 go_install ffuf        "github.com/ffuf/ffuf/v2@latest"
 go_install httpx       "github.com/projectdiscovery/httpx/cmd/httpx@latest"
@@ -223,7 +240,7 @@ go_install gau         "github.com/lc/gau/v2/cmd/gau@latest"
 go_install waybackurls "github.com/tomnomnom/waybackurls@latest"
 go_install anew        "github.com/tomnomnom/anew@latest"
 go_install qsreplace   "github.com/tomnomnom/qsreplace@latest"
-go_install uro          "github.com/s0md3v/uro@latest" 2>/dev/null || pip_install uro "uro"
+pip_install uro        "uro"
 
 # WPScan (Ruby gem)
 if ! command -v wpscan &>/dev/null; then
@@ -502,6 +519,25 @@ if [ -d "$HEXSTRIKE_DIR" ]; then
   fi
 else
   warn "hexstrike-ai/ not found — run setup.sh first to clone it"
+fi
+
+# ══════════════════════════════════════════════════════════════
+# PERSIST GO PATH FOR FUTURE SHELL SESSIONS
+# ══════════════════════════════════════════════════════════════
+
+echo ""
+info "═══ Persisting Go PATH ═══"
+
+cat > /etc/profile.d/go-path.sh << 'GOEOF'
+export GOPATH="${GOPATH:-/root/go}"
+export PATH="/usr/local/go/bin:$GOPATH/bin:$PATH"
+GOEOF
+chmod +x /etc/profile.d/go-path.sh
+ok "Go PATH persisted to /etc/profile.d/go-path.sh"
+
+if ! grep -q 'go-path.sh' /root/.bashrc 2>/dev/null; then
+  echo 'source /etc/profile.d/go-path.sh' >> /root/.bashrc
+  ok "Added Go PATH to /root/.bashrc"
 fi
 
 # ══════════════════════════════════════════════════════════════
