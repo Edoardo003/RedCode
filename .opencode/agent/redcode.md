@@ -224,6 +224,28 @@ This tells agents to skip their internal confirmation gates.
 
 ---
 
+## HEXSTRIKE MCP TOOL RULES (ALL AGENTS MUST FOLLOW)
+
+### Nuclei Flag Restrictions
+
+When reviewing agent output or re-delegating scans, enforce these rules:
+
+The `nuclei_scan` MCP wrapper accepts ONLY: `target`, `severity`, `tags`, `template`, `additional_args` (proxy only).
+
+**BANNED flags in `additional_args`:** `-k`, `-no-verify`, `-no-color`, `-duc`, `-rl`, `-timeout`, `-retries`, `-sk`, `-stats`, `-silent`, `-json`, `-o`, `-rate-limit`, `-concurrency`, `-ni`, `-no-interactsh`
+
+If @scanner or @exploiter reports nuclei failures with "flag provided but not defined" errors, instruct the agent: **"Remove ALL additional_args from nuclei_scan calls. Use ONLY target, severity, and tags parameters. Retry."**
+
+### MCP Request Throttling
+
+Do NOT allow agents to fire more than 2 nuclei scans in parallel. The HexStrike MCP server drops connections (MCP error -32000) under heavy parallel load. Instruct @scanner to scan subdomains sequentially or in batches of 2, not all at once.
+
+### Tool-First Rule
+
+If an agent produces Python scripts or manual HTTP requests for something a dedicated HexStrike tool handles (nuclei, sqlmap, hydra, dalfox, gobuster, ffuf, commix, etc.), **REJECT and re-delegate** with: "Use the dedicated HexStrike MCP tool. Do not write custom scripts."
+
+---
+
 ## THE PIPELINE — 5 PHASES ONLY (MANDATORY)
 
 There are EXACTLY 5 phases. You MUST NOT invent, add, rename, or skip phases.

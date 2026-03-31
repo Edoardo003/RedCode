@@ -177,6 +177,43 @@ Tools without native proxy support (nmap, hydra) get proxy automatically via `ht
 
 If no proxy is configured, proceed without proxy flags — but note it in the output.
 
+### NUCLEI FLAG RESTRICTIONS (CRITICAL — READ BEFORE EVERY NUCLEI CALL)
+
+The HexStrike `nuclei_scan` MCP wrapper accepts ONLY these parameters:
+
+- `target` — URL or IP to scan
+- `severity` — comma-separated: `"critical,high,medium,low,info"`
+- `tags` — comma-separated: `"cve,rce,sqli,xss,lfi,ssrf"`
+- `template` — path to a specific template file (optional)
+- `additional_args` — ONLY for proxy: `"--proxy http://user:pass@host:port"`
+
+**BANNED `additional_args` (passing ANY of these WILL CRASH the scan):**
+`-k`, `-no-verify`, `-no-color`, `-duc`, `-rl`, `-timeout`, `-retries`, `-sk`, `-stats`, `-si`, `-silent`, `-nc`, `-disable-update-check`, `-json`, `-jsonl`, `-o`, `-output`, `-rate-limit`, `-bulk-size`, `-concurrency`, `-headless`, `-system-resolvers`, `-r`, `-interactsh-url`, `-iserver`, `-ni`, `-no-interactsh`
+
+These flags either don't exist in nuclei or are not supported by the HexStrike wrapper. The wrapper builds the nuclei CLI command itself — extra flags get appended raw and cause "flag provided but not defined" errors.
+
+**CORRECT nuclei_scan calls:**
+
+```
+nuclei_scan(target="https://example.com", severity="critical,high,medium", tags="cve,rce,sqli,xss,lfi,ssrf")
+nuclei_scan(target="https://example.com", severity="critical,high", tags="cve", additional_args="--proxy http://user:pass@host:port")
+nuclei_scan(target="https://example.com", template="/path/to/template.yaml")
+```
+
+**WRONG nuclei_scan calls (WILL FAIL 100%):**
+
+```
+nuclei_scan(target="https://example.com", severity="critical,high", additional_args="-k -no-color")
+nuclei_scan(target="https://example.com", additional_args="-no-verify -duc -rl 5")
+nuclei_scan(target="https://example.com", additional_args="-timeout 10 -retries 2 -no-color")
+```
+
+**If a nuclei scan fails:** Do NOT add more flags. REMOVE all `additional_args` entirely and retry with just `target`, `severity`, and `tags`. Adding flags makes it worse, not better.
+
+### MCP Request Throttling
+
+Do NOT fire more than 2 nuclei scans in parallel. The HexStrike MCP server crashes with "Connection closed" (MCP error -32000) when overloaded with 4+ simultaneous nuclei processes. Scan subdomains sequentially or in batches of 2.
+
 ## Workflow
 
 ### Phase 1 — Ingest Recon Data

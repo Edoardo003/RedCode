@@ -161,3 +161,13 @@ Use @reporter to compile the final report:
 - If any phase reveals scope concerns, STOP and ask regardless of mode
 - ALWAYS persist findings and credentials to SQLite
 - ALWAYS include exploitation evidence in the final report
+
+## Nuclei Scan Rules (CRITICAL — agents MUST follow)
+
+The `nuclei_scan` MCP tool accepts ONLY: `target`, `severity`, `tags`, `template`, and `additional_args` (proxy only).
+
+**BANNED `additional_args`:** `-k`, `-no-verify`, `-no-color`, `-duc`, `-rl`, `-timeout`, `-retries`, `-sk`, `-stats`, `-silent`, `-json`, `-o`, `-rate-limit`, `-concurrency`, `-ni`
+
+If nuclei scans fail with "flag provided but not defined", tell @scanner: "Remove ALL additional_args. Retry with just target, severity, tags."
+
+Do NOT fire more than 2 nuclei scans in parallel — the HexStrike MCP crashes under heavy load.

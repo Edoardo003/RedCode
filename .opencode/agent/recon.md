@@ -78,6 +78,18 @@ If `PROXY_URL` is set in the environment, pass it to every HexStrike tool call. 
 
 If no proxy is configured, proceed without proxy flags — but note it in the output. Most tools also respect `http_proxy`/`https_proxy` env vars which the `redcode` launcher auto-exports when `PROXY_URL` is set.
 
+### NUCLEI FLAG RESTRICTIONS (CRITICAL)
+
+If you use `nuclei_scan` during recon (e.g., technology detection, quick vuln check):
+
+The wrapper accepts ONLY: `target`, `severity`, `tags`, `template`, and `additional_args` (proxy only).
+
+**BANNED `additional_args`:** `-k`, `-no-verify`, `-no-color`, `-duc`, `-rl`, `-timeout`, `-retries`, `-sk`, `-stats`, `-silent`, `-json`, `-o`, `-rate-limit`, `-concurrency`, `-ni`
+
+These flags crash the scan with "flag provided but not defined" errors. If nuclei fails, remove ALL `additional_args` and retry with just `target`, `severity`, `tags`.
+
+Do NOT run more than 2 nuclei scans in parallel — MCP server crashes under heavy load.
+
 ## Workflow
 
 ### Phase 1 — Passive Recon (safe, no direct target contact)
