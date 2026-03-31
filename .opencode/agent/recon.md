@@ -61,7 +61,8 @@ The ONLY exception: the user explicitly says "do it manually". Without that, too
 - `nmap` CLI — use `nmap_scan` via HexStrike
 - `dig`/`nslookup` CLI — use HexStrike DNS tools or `fetch` MCP
 - `whois` CLI — use HexStrike or Brave Search
-- Writing custom scripts for port scanning or enumeration
+- Writing custom Python/Bash scripts for port scanning, enumeration, or DNS brute-force
+- Using `execute_python_script` to run hand-written recon scripts when a dedicated tool exists
 
 ### Proxy / IP Rotation
 

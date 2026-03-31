@@ -132,6 +132,29 @@ Before writing the file, verify:
 4. Would this PoC reproduce the SPECIFIC vulnerability found? -> If not, STOP
 5. Does the --check mode perform a safe, non-destructive verification? -> If not, fix it
 
+## OUTPUT VALIDATION (CRITICAL — ANTI-HALLUCINATION)
+
+When executing the PoC in --check mode, you MUST verify ACTUAL exploitation, not false positives:
+
+### Success ≠ HTTP 200
+
+1. **HTTP 200 ≠ vulnerability confirmed** — apps return 200 for errors, blocked requests, login pages
+2. **Response must contain SPECIFIC exploit evidence**: extracted data, injected content visible in DOM, command output in body, database records
+3. **Compare against baseline**: make a NORMAL request first, then the exploit request. If responses are identical → exploit did NOT work
+4. **Empty or generic responses = FAILED** — if the response doesn't contain evidence specific to the vulnerability, the PoC failed
+
+### Ambiguous Results
+
+1. **DO NOT claim "verified"** for ambiguous output — report "inconclusive, manual review needed"
+2. **Show both the PoC output AND explain why it's ambiguous**
+3. Set finding confidence to `potential`, NOT `confirmed`
+
+### CVE Accuracy
+
+1. **NEVER invent or guess CVE types** — if the finding references a CVE, verify the CVE type matches before writing the PoC
+2. **If the CVE is XSS, write an XSS PoC** — do NOT write an RCE PoC for an XSS CVE
+3. **If you cannot verify the CVE, omit it** from the PoC header and note "CVE unverified"
+
 ## BEHAVIOR RULES
 
 - If user says "hi" or greets you -> reply ONE short sentence, stop
