@@ -552,13 +552,33 @@ Load these skills based on the engagement type:
 
 These skills contain correct parameters, banned flags, and retry strategies for HexStrike MCP tools. Load them when delegating to agents that use the corresponding tool:
 
-| Skill                | Load for         | Covers                                                |
-| -------------------- | ---------------- | ----------------------------------------------------- |
-| `hexstrike-nuclei`   | @scanner         | Accepted params, BANNED flags, MCP throttling (max 2) |
-| `hexstrike-sqlmap`   | @exploiter       | Flag combos by phase, --batch rule, WAF tamper        |
-| `hexstrike-hydra`    | @exploiter       | HTTP form syntax, false positive detection, wordlists |
-| `hexstrike-httpx`    | @scanner, @recon | Probe patterns, proxy flag (-http-proxy not --proxy)  |
-| `hexstrike-gobuster` | @scanner         | gobuster + ffuf, wordlists, extension lists by tech   |
+| Skill                    | Load for             | Covers                                                  |
+| ------------------------ | -------------------- | ------------------------------------------------------- |
+| `hexstrike-nuclei`       | @scanner             | Accepted params, BANNED flags, MCP throttling (max 2)   |
+| `hexstrike-sqlmap`       | @exploiter           | Flag combos by phase, --batch rule, WAF tamper          |
+| `hexstrike-hydra`        | @exploiter           | HTTP form syntax, false positive detection, wordlists   |
+| `hexstrike-httpx`        | @scanner, @recon     | Probe patterns, proxy flag (-http-proxy not --proxy)    |
+| `hexstrike-gobuster`     | @scanner             | gobuster + ffuf, wordlists, extension lists by tech     |
+| `hexstrike-nmap`         | @recon               | nmap + rustscan + masscan, port scan flags, proxychains |
+| `hexstrike-amass`        | @recon, @osint       | amass_enum + amass_scan + subfinder, DNS enumeration    |
+| `hexstrike-theharvester` | @recon, @osint       | Email/subdomain harvesting, data source selection       |
+| `hexstrike-sherlock`     | @recon, @osint       | Username OSINT across social platforms, timeout tuning  |
+| `hexstrike-shodan`       | @recon               | Search query syntax (hostname:, org:, net:, filters)    |
+| `hexstrike-osint`        | @osint               | bugbounty_osint_gathering, automated recon workflow     |
+| `hexstrike-urldiscovery` | @osint               | gau + waybackurls + hakrawler, URL collection params    |
+| `hexstrike-nikto`        | @scanner             | Web server scanning, tuning profiles, proxy config      |
+| `hexstrike-burpsuite`    | @scanner             | Active/passive scanning, scope config, scan types       |
+| `hexstrike-xss`          | @scanner, @exploiter | dalfox + xsser, blind XSS, WAF evasion, param fuzzing   |
+| `hexstrike-commix`       | @scanner, @exploiter | Command injection, OS-cmd exec, technique selection     |
+| `hexstrike-dotdotpwn`    | @scanner, @exploiter | Path traversal fuzzing, traversal depth, file targets   |
+| `hexstrike-wpscan`       | @scanner, @exploiter | WordPress enum (users/plugins/themes), brute force      |
+| `hexstrike-searchsploit` | @scanner, @exploiter | Exploit-DB local search, exact match, CVE lookup        |
+| `hexstrike-metasploit`   | @exploiter           | metasploit_run + msfvenom_generate, module/payload cfg  |
+| `hexstrike-cracking`     | @exploiter           | john + hashcat, hash format detection, wordlist/rules   |
+| `hexstrike-pwntools`     | @exploiter           | Binary exploitation scripts, ROP chains, shellcode      |
+| `hexstrike-pacu`         | @exploiter           | AWS exploitation modules, cloud credential abuse        |
+| `hexstrike-python`       | @exploiter           | Script execution — RESTRICTED to published exploits     |
+| `hexstrike-intelligence` | all agents           | Target intel analysis, data correlation, threat model   |
 
 ## Persistence
 
