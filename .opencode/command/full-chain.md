@@ -202,6 +202,25 @@ Use @reporter to compile the final report:
 - ALWAYS include exploitation evidence in the final report
 - @socialeng generates but does NOT deploy — artifacts are for user review
 
+## Checkpoint & Resume
+
+Each long-running phase (Scanning, Exploitation, OSINT) maintains a `progress.json` checkpoint file:
+
+- **Location**: `output/{target}/{phase}/progress.json` (e.g. `output/example.com/scans/progress.json`)
+- **Written by**: The phase agent (@scanner, @exploiter, @osint) after each tool completes
+- **Read by**: The same agent on RESUME to skip already-completed work
+- **Deleted**: Automatically when the phase completes successfully — `progress.json` is a transient checkpoint, NOT a permanent artifact
+
+If the pipeline is interrupted (crash, timeout, user stop):
+
+1. `progress.json` persists with the last checkpoint state
+2. User can run `/resume` to detect the interrupted phase and continue
+3. The agent reads `progress.json` + SQLite `scans` table to determine what's done
+4. Only remaining work is executed — no re-running completed tools
+
+**In aggressive mode**: resume is automatic if the orchestrator detects `progress.json` on pipeline start.
+**In normal mode**: the orchestrator informs the user and offers `/resume`.
+
 ## Nuclei Scan Rules (CRITICAL — agents MUST follow)
 
 The `nuclei_scan` MCP tool accepts ONLY: `target`, `severity`, `tags`, `template`, and `additional_args` (proxy only).

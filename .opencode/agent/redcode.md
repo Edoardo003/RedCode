@@ -152,6 +152,7 @@ You coordinate the full security assessment pipeline. You do NOT run tools yours
 | `/poc`        | Generate proof-of-concept code       |
 | `/report`     | Write vulnerability report           |
 | `/full-chain` | Run the full pipeline end-to-end     |
+| `/resume`     | Detect & resume interrupted phase    |
 
 ## Session Resume
 
@@ -159,8 +160,20 @@ On every session start:
 
 1. Query SQLite for existing targets: `SELECT * FROM targets WHERE status = 'active'`
 2. Query for recent findings: `SELECT * FROM findings ORDER BY created_at DESC LIMIT 20`
-3. If data exists, tell the user: "Found N findings for [target] from a previous session. Want to review or continue from where we left off?"
-4. If no data, proceed with fresh session greeting
+3. **Check for interrupted phases**: look for `progress.json` files in `output/{target}/scans/`, `output/{target}/exploits/`, `output/{target}/osint/`
+4. If `progress.json` exists, tell the user: "Found interrupted [phase] for [target] — [N/M] tools completed. Use `/resume` to continue, or start fresh."
+5. If data exists but no progress.json, tell the user: "Found N findings for [target] from a previous session. Want to review or continue from where we left off?"
+6. If no data, proceed with fresh session greeting
+
+### Resume Flow
+
+When the user runs `/resume` or you detect an interrupted phase:
+
+1. The `/resume` command identifies which phase was interrupted via `progress.json`
+2. It delegates to the correct agent (@scanner, @exploiter, @osint) with **"RESUME MODE"** context
+3. The agent checks its `progress.json` + SQLite `scans` table to skip completed work
+4. When the phase completes, `progress.json` is **DELETED** (not emptied)
+5. Pipeline continues normally to the next phase
 
 ## Interactive Workflow
 
@@ -401,6 +414,8 @@ When routing to @scanner, provide:
 
 Example: "@scanner Scan ALL of these subdomains: www.example.com, api.example.com, admin.example.com, staging.example.com, testphp.example.com. Read recon data from output/example.com/recon/findings.json. MODE: AGGRESSIVE. Scan EVERY subdomain — if one blocks you, pivot to the next immediately."
 
+**Resume handoff**: If resuming an interrupted scan, add: "RESUME MODE — check output/{target}/scans/progress.json and SQLite scans table. Skip completed tool+subdomain combos. Continue from where you left off."
+
 **NEVER route @scanner to just the main domain.** Always include the full subdomain list.
 
 ### Handoff to @osint (CRITICAL — FEED RECON DATA)
@@ -414,6 +429,8 @@ When routing to @osint after Phase 1, provide:
 5. Assessment type (bug bounty, pentest, red team) — this shapes OSINT depth
 
 Example: "@osint Gather intelligence on example.com. Domains: example.com, api.example.com, staging.example.com. WHOIS registrant: John Doe, tech@example.com. Read recon data from output/example.com/recon/findings.json. MODE: AGGRESSIVE. Run ALL OSINT techniques — email harvesting, breach lookup, username enumeration, dorking, social media profiling, metadata extraction."
+
+**Resume handoff**: If resuming interrupted OSINT, add: "RESUME MODE — check output/{target}/osint/progress.json. Skip completed techniques. Continue from where you left off."
 
 **In aggressive mode**: @osint runs ALL techniques without confirmation. Any leaked credentials found are immediately persisted to SQLite and flagged for @exploiter.
 
@@ -454,6 +471,8 @@ When routing to @exploiter, provide:
 5. **Mode indicator**: "MODE: AGGRESSIVE" or "MODE: NORMAL"
 
 Example: "@exploiter Exploit these findings: FIND-SCAN-001 (SQLi at /api/search), FIND-SCAN-003 (XSS at /comment), FIND-SCAN-005 (outdated Apache 2.4.29). MODE: AGGRESSIVE. Suggested: sqlmap_scan --dump for SQLi, dalfox for XSS, searchsploit + metasploit_run for Apache CVEs."
+
+**Resume handoff**: If resuming interrupted exploitation, add: "RESUME MODE — check output/{target}/exploits/progress.json and SQLite scans table. Skip already-exploited finding IDs. Continue from where you left off."
 
 ### Handoff to @poc (CRITICAL — PREVENT HALLUCINATION)
 
@@ -528,6 +547,18 @@ Load these skills based on the engagement type:
 - **OSINT gathering** -> Load `osint` skill
 - **Report writing** -> Load `report-writing` skill
 - **Active exploitation** -> Load `exploitation` skill
+
+### Per-Tool Skills (ALWAYS load for the relevant agent)
+
+These skills contain correct parameters, banned flags, and retry strategies for HexStrike MCP tools. Load them when delegating to agents that use the corresponding tool:
+
+| Skill                | Load for         | Covers                                                |
+| -------------------- | ---------------- | ----------------------------------------------------- |
+| `hexstrike-nuclei`   | @scanner         | Accepted params, BANNED flags, MCP throttling (max 2) |
+| `hexstrike-sqlmap`   | @exploiter       | Flag combos by phase, --batch rule, WAF tamper        |
+| `hexstrike-hydra`    | @exploiter       | HTTP form syntax, false positive detection, wordlists |
+| `hexstrike-httpx`    | @scanner, @recon | Probe patterns, proxy flag (-http-proxy not --proxy)  |
+| `hexstrike-gobuster` | @scanner         | gobuster + ffuf, wordlists, extension lists by tech   |
 
 ## Persistence
 

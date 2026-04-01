@@ -181,6 +181,83 @@ If `PROXY_URL` is set, pass it to HexStrike tools. For Brave Search, proxy is ha
 
 ## Workflow
 
+### RESUME PROTOCOL (READ BEFORE STARTING ANY PHASE)
+
+**On EVERY phase start**, check if previous OSINT work exists before running tools/searches:
+
+#### Step 1 — Check SQLite for Completed OSINT Tasks
+
+```sql
+SELECT tool, command, status FROM scans WHERE target_id = ? AND phase = 'osint' AND status = 'completed';
+```
+
+Build a **skip list**. If `bugbounty_osint_gathering` already shows `completed`, **DO NOT re-run it**.
+
+#### Step 2 — Check progress.json for Checkpoint Data
+
+Read `output/{target}/osint/progress.json` if it exists:
+
+```json
+{
+  "phase": "osint",
+  "target": "example.com",
+  "last_updated": "2025-03-31T13:45:00Z",
+  "completed_tools": [
+    {
+      "tool": "bugbounty_osint_gathering",
+      "status": "completed",
+      "timestamp": "2025-03-31T13:30:00Z"
+    },
+    {
+      "tool": "gau_discovery",
+      "status": "completed",
+      "timestamp": "2025-03-31T13:35:00Z"
+    },
+    {
+      "tool": "dorking_email_harvest",
+      "status": "completed",
+      "timestamp": "2025-03-31T13:40:00Z"
+    }
+  ],
+  "pending": ["breach_lookup", "username_enum", "metadata_extraction"],
+  "current": null
+}
+```
+
+If progress.json exists → **RESUME**. Skip completed techniques.
+
+#### Step 3 — Skip Completed, Run Pending
+
+For each OSINT technique you are about to run:
+
+1. Check the skip list (SQLite + progress.json)
+2. If technique already completed → **SKIP** with log: `"RESUME: Skipping bugbounty_osint_gathering — already completed at 13:30"`
+3. If not completed → run the technique normally
+
+#### Step 4 — Update Checkpoint After Each Technique
+
+After EACH successful technique completion, update `output/{target}/osint/progress.json`:
+
+1. Add the technique to `completed_tools`
+2. Remove from `pending`
+3. Set `current` to null
+4. Update `last_updated`
+
+Also persist to SQLite:
+
+```sql
+INSERT INTO scans (target_id, tool, command, status, phase) VALUES (?, 'bugbounty_osint_gathering', 'osint gathering for example.com', 'running', 'osint');
+UPDATE scans SET status = 'completed', ended_at = datetime('now') WHERE id = ?;
+```
+
+#### Step 5 — Clean Up on Phase Completion
+
+When ALL OSINT techniques are done:
+
+**DELETE** `output/{target}/osint/progress.json` — clean slate for next run.
+
+---
+
 ### Phase 1 — Ingest Recon Data
 
 Read previous phase findings if available:

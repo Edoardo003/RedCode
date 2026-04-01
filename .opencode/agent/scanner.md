@@ -216,6 +216,87 @@ Do NOT fire more than 2 nuclei scans in parallel. The HexStrike MCP server crash
 
 ## Workflow
 
+### RESUME PROTOCOL (READ BEFORE STARTING ANY PHASE)
+
+**On EVERY phase start**, check if previous work exists before running tools:
+
+#### Step 1 — Check SQLite for Completed Scans
+
+```sql
+SELECT tool, subdomain, command, status FROM scans WHERE target_id = ? AND status = 'completed';
+```
+
+Build a **skip list** from the results. If `nuclei` + `api.example.com` already shows `completed`, **DO NOT re-run nuclei on api.example.com**.
+
+#### Step 2 — Check progress.json for Checkpoint Data
+
+Read `output/{target}/scans/progress.json` if it exists. This file tracks per-tool, per-subdomain completion:
+
+```json
+{
+  "phase": "scan",
+  "target": "example.com",
+  "last_updated": "2025-03-31T14:22:00Z",
+  "completed_tools": [
+    {
+      "tool": "nuclei",
+      "subdomain": "api.example.com",
+      "status": "completed",
+      "timestamp": "2025-03-31T14:10:00Z"
+    },
+    {
+      "tool": "nikto",
+      "subdomain": "api.example.com",
+      "status": "completed",
+      "timestamp": "2025-03-31T14:15:00Z"
+    }
+  ],
+  "pending": [
+    "www.example.com/nuclei",
+    "www.example.com/nikto",
+    "admin.example.com/nuclei"
+  ],
+  "current": null
+}
+```
+
+If progress.json exists, this is a **RESUME**. Load the completed list and skip those tool+subdomain combos.
+
+#### Step 3 — Skip Completed, Run Pending
+
+For each tool call you are about to make:
+
+1. Check the skip list (SQLite + progress.json)
+2. If tool+subdomain already completed → **SKIP** with log: `"RESUME: Skipping nuclei on api.example.com — already completed at 14:10"`
+3. If not completed → run the tool normally
+
+#### Step 4 — Update Checkpoint After Each Tool
+
+After EACH successful tool completion, update `output/{target}/scans/progress.json`:
+
+1. Add the tool+subdomain to `completed_tools`
+2. Remove it from `pending`
+3. Set `current` to null
+4. Update `last_updated` timestamp
+
+Also update SQLite as usual:
+
+```sql
+INSERT INTO scans (target_id, tool, subdomain, command, status) VALUES (?, 'nuclei', 'api.example.com', 'nuclei -u api.example.com -severity critical,high', 'running');
+-- After completion:
+UPDATE scans SET status = 'completed', ended_at = datetime('now') WHERE id = ?;
+```
+
+#### Step 5 — Clean Up on Phase Completion
+
+When ALL tools on ALL subdomains are done (phase complete):
+
+**DELETE** `output/{target}/scans/progress.json` — clean slate for next run.
+
+If the phase was interrupted and resumed, the progress.json allowed us to skip completed work. Once the phase finishes, we no longer need the checkpoint.
+
+---
+
 ### Phase 1 — Ingest Recon Data
 
 Read previous phase findings:
