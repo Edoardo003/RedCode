@@ -107,6 +107,16 @@
       "steps": 50,
     },
 
+    "osint": {
+      "model": "github-copilot/gpt-5.4-mini",
+      "steps": 50,
+    },
+
+    "socialeng": {
+      "model": "github-copilot/gpt-5.4",
+      "steps": 40,
+    },
+
     "poc": {
       "model": "lm-studio/qwen3.5-9b-uncensored-hauhaucs-aggressive",
       "steps": 25,
