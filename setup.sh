@@ -430,13 +430,21 @@ case "$proxy_choice" in
       sed -i "s|PROXY_URL=.*|PROXY_URL=${custom_proxy}|" .env
       ok "PROXY_URL set to $custom_proxy"
 
-      # Test the proxy
+      # Test the proxy (rotating proxies can be slow — generous timeouts)
       info "Testing proxy..."
-      proxy_ip=$(curl -s --connect-timeout 5 --proxy "$custom_proxy" https://api.ipify.org 2>/dev/null || echo "failed")
-      if [ "$proxy_ip" != "failed" ] && [ -n "$proxy_ip" ]; then
+      proxy_ip=""
+      for test_url in "http://ipv4.webshare.io/" "http://api.ipify.org/"; do
+        proxy_ip=$(curl -s --connect-timeout 15 --max-time 25 --proxy "$custom_proxy" "$test_url" 2>/dev/null)
+        if [ -n "$proxy_ip" ] && echo "$proxy_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+          break
+        fi
+        proxy_ip=""
+      done
+      if [ -n "$proxy_ip" ]; then
         ok "Proxy working — exit IP: $proxy_ip"
       else
         warn "Proxy test failed — check URL and credentials"
+        warn "Debug: curl -v --connect-timeout 15 --proxy \"$custom_proxy\" http://ipv4.webshare.io/"
       fi
     else
       warn "No proxy URL entered — skipping"
