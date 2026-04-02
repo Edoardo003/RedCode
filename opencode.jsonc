@@ -38,7 +38,7 @@
         "--server",
         "{env:HEXSTRIKE_URL}",
       ],
-      "timeout": 3600000,
+      "timeout": 86400000,
     },
 
     // Filesystem — read/write output directory for reports and results
