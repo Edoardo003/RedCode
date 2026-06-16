@@ -81,7 +81,10 @@
       "command": ["mcp-server-sqlite", "--db-path", "{env:REDCODE_DB}"],
     },
 
+    /*
     // Bugcrowd — bug bounty program management, submissions, and rewards
+    // NOTE: Bugcrowd REST API and AI Connect require team/organization access.
+    // This server is disabled by default for researcher accounts.
     "bugcrowd": {
       "type": "local",
       "command": [
@@ -94,6 +97,7 @@
       },
       "timeout": 60000,
     },
+    */
 
     // HackerOne — bug bounty program management, reports, and payments
     "hackerone": {

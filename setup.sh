@@ -211,9 +211,9 @@ fi
 
 # ── Python MCP servers ─────────────────────────────────────────
 
-info "Installing Python MCP servers (fetch + sqlite + bugcrowd + hackerone)..."
+info "Installing Python MCP servers (fetch + sqlite + hackerone)..."
 pip3 install mcp-server-fetch mcp-server-sqlite mcp requests --quiet 2>/dev/null \
-  && ok "Python MCP servers installed (fetch, sqlite, bugcrowd, hackerone deps)" \
+  && ok "Python MCP servers installed (fetch, sqlite, hackerone deps)" \
   || warn "Failed to install Python MCP servers — run: pip3 install mcp-server-fetch mcp-server-sqlite mcp requests"
 
 # ── Node MCP servers ───────────────────────────────────────────
