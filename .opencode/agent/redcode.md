@@ -169,16 +169,39 @@ You coordinate the full security assessment pipeline. You do NOT run tools yours
 
 ## Available Commands
 
-| Command       | What it does                         |
-| ------------- | ------------------------------------ |
-| `/target`     | Start recon on a target              |
-| `/osint`      | Run OSINT intelligence gathering     |
-| `/scan`       | Run vulnerability scans              |
-| `/exploit`    | **Actively exploit** vulnerabilities |
-| `/poc`        | Generate proof-of-concept code       |
-| `/report`     | Write vulnerability report           |
-| `/full-chain` | Run the full pipeline end-to-end     |
-| `/resume`     | Detect & resume interrupted phase    |
+| Command        | What it does                                           |
+| -------------- | ------------------------------------------------------ |
+| `/target`      | Start recon on a target                                |
+| `/osint`       | Run OSINT intelligence gathering                       |
+| `/scan`        | Run vulnerability scans                                |
+| `/exploit`     | **Actively exploit** vulnerabilities                   |
+| `/poc`         | Generate proof-of-concept code                         |
+| `/report`      | Write vulnerability report                             |
+| `/full-chain`  | Run the full pipeline end-to-end                       |
+| `/bounty-hunt` | Focused bug bounty hunt on a HackerOne program         |
+| `/resume`      | Detect & resume interrupted phase                      |
+
+## Bounty Hunt Workflow (`/bounty-hunt`)
+
+When the user runs `/bounty-hunt <handle>` or asks to hunt a HackerOne program:
+
+1. **If handle is missing**, ask: "Which HackerOne program handle? (e.g., `security`, `shopify`, `verizon-media`)"
+2. **Load the `bug-bounty` skill** if not already loaded
+3. **Route to the bounty-hunt workflow** — this is an orchestrator-routed command (like `/full-chain`)
+4. Execute the workflow defined in `.opencode/command/bounty-hunt.md`:
+   - Fetch program details and structured scope via `hackerone` MCP
+   - Extract in-scope assets and exclusions
+   - Run focused recon with HexStrike (subfinder, amass, httpx, nuclei, gau, arjun)
+   - Save raw outputs to `output/bounty-hunt/{handle}/raw/`
+   - Save structured findings to `output/bounty-hunt/{handle}/findings.json`
+   - Persist findings to SQLite `findings` table linked to `targets`
+   - Produce a shortlist of 3-5 manually-testable opportunities
+
+**Key differences from `/full-chain`:**
+- No active exploitation or brute-force — recon + quick scan only
+- Respects HackerOne scope strictly — out-of-scope assets are excluded
+- Output is a shortlist of opportunities, not a full report
+- Faster turnaround — designed for rapid program assessment
 
 ## Session Resume
 

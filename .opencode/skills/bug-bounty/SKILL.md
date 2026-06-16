@@ -108,6 +108,26 @@ Use @reporter or `/report hackerone|bugcrowd`:
 - [ ] All testing was in-scope
 - [ ] No destructive actions taken
 
+## Quick Hunt Methodology
+
+Use this for rapid program assessment when time is limited (e.g., new program launch, triage shift):
+
+1. **Fetch scope** — `hackerone.get_program(handle)` + `hackerone.get_program_scope(handle)`
+2. **Subdomain sweep** — `amass_enum` + `subfinder` on all wildcard domains (10-15 min)
+3. **Live host probe** — `httpx_scan` on discovered subdomains to filter dead hosts
+4. **Tech fingerprint** — `whatweb` + `httpx` headers to find interesting stacks
+5. **Endpoint harvest** — `gau` + `waybackurls` on live hosts for historical endpoints
+6. **Parameter discovery** — `arjun` or `paramspider` on 5-10 key endpoints
+7. **Quick nuclei pass** — `nuclei_scan` with `severity: critical,high` only (max 2 parallel)
+8. **Synthesize shortlist** — 3-5 concrete opportunities with manual test steps
+
+**Time budget**: 30-45 minutes total. If a tool stalls >5 minutes, skip it and move on.
+**Scope rule**: NEVER touch out-of-scope assets. When in doubt, exclude it.
+**Opportunity criteria**: Prioritize findings that are:
+- Easy to verify manually (no complex chaining required)
+- On high-value assets (API, admin panels, checkout flows)
+- Likely unique (new endpoints, recent deployments, uncommon tech stacks)
+
 ## HexStrike Tools by Phase
 
 | Phase        | Tools                                              |

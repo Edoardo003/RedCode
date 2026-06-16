@@ -140,6 +140,31 @@ def setup_mcp_server(client: HackerOneClient) -> FastMCP:
         return result
 
     @mcp.tool()
+    def get_program_scope(handle: str) -> Dict[str, Any]:
+        """Get structured scope (in-scope and out-of-scope assets) for a HackerOne program."""
+        logger.info(f"Fetching program scope: {handle}")
+        result = client.get(f"/hackers/programs/{handle}/structured_scopes")
+        if result.get("success"):
+            logger.info("Program scope retrieved")
+        else:
+            logger.error("Failed to retrieve program scope")
+        return result
+
+    @mcp.tool()
+    def search_programs(query: str, page: int = 1, per_page: int = 25) -> Dict[str, Any]:
+        """Search HackerOne programs by keyword (name, handle, or description)."""
+        logger.info(f"Searching programs (query={query}, page={page}, per_page={per_page})")
+        params: Dict[str, Any] = {"page[number]": page, "page[size]": per_page}
+        if query:
+            params["filter[search]"] = query
+        result = client.get("/hackers/programs", params=params)
+        if result.get("success"):
+            logger.info("Programs searched successfully")
+        else:
+            logger.error("Failed to search programs")
+        return result
+
+    @mcp.tool()
     def health_check() -> Dict[str, Any]:
         """Verify HackerOne API connectivity and credentials."""
         logger.info("Running HackerOne health check")
