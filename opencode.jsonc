@@ -80,6 +80,34 @@
       "type": "local",
       "command": ["mcp-server-sqlite", "--db-path", "{env:REDCODE_DB}"],
     },
+
+    // Bugcrowd — bug bounty program management, submissions, and rewards
+    "bugcrowd": {
+      "type": "local",
+      "command": [
+        "python3",
+        "bugcrowd-mcp/server.py",
+      ],
+      "environment": {
+        "BUGCROWD_API_USERNAME": "{env:BUGCROWD_API_USERNAME}",
+        "BUGCROWD_API_PASSWORD": "{env:BUGCROWD_API_PASSWORD}",
+      },
+      "timeout": 60000,
+    },
+
+    // HackerOne — bug bounty program management, reports, and payments
+    "hackerone": {
+      "type": "local",
+      "command": [
+        "python3",
+        "hackerone-mcp/server.py",
+      ],
+      "environment": {
+        "HACKERONE_API_USERNAME": "{env:HACKERONE_API_USERNAME}",
+        "HACKERONE_API_TOKEN": "{env:HACKERONE_API_TOKEN}",
+      },
+      "timeout": 60000,
+    },
   },
 
   // ── Agent Configuration ────────────────────────────────────────
