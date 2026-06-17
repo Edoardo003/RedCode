@@ -112,6 +112,14 @@
       },
       "timeout": 60000,
     },
+
+    // Burp Suite — manual HTTP request verification, proxy history, repeater
+    "burp": {
+      "type": "remote",
+      "url": "{env:BURP_MCP_URL}",
+      "enabled": true,
+      "timeout": 120000,
+    },
   },
 
   // ── Agent Configuration ────────────────────────────────────────

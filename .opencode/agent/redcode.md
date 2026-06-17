@@ -649,6 +649,17 @@ Use the Playwright MCP to:
 - Capture before/after states for the report
 - Navigate authenticated areas when testing auth flaws
 
+## Burp Suite Integration
+
+Use the `burp` MCP server for manual HTTP request inspection and verification:
+
+- Send custom HTTP requests via Repeater-style tools instead of writing Python scripts
+- Inspect proxy history for interesting requests/responses
+- Verify findings discovered by scanners before reporting
+- Avoid custom `import requests` scripts — use Burp's built-in request tooling
+
+When a scanner or recon agent finds a promising endpoint, route manual verification through `burp` rather than allowing custom scripts.
+
 ## Web Research
 
 Use Brave Search to:

@@ -43,6 +43,7 @@ Run these tools sequentially (do NOT overwhelm the HexStrike MCP):
 4. **Endpoint discovery** — `gau` + `waybackurls` on live hosts to collect historical endpoints
 5. **Parameter discovery** — `arjun` or `paramspider` on key endpoints to find hidden params
 6. **Quick vulnerability scan** — `nuclei_scan` with `severity: critical,high,medium` on live hosts (max 2 parallel scans)
+7. **Manual verification via Burp** — for the most promising endpoints, use the `burp` MCP server to send requests, inspect responses, and create Repeater tabs instead of writing custom scripts
 
 **Rules for this phase:**
 - Respect out-of-scope exclusions from Phase 1 — NEVER scan excluded assets
