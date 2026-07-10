@@ -85,6 +85,8 @@ Agent models come from the OpenCode Go plan and are configured only in `opencode
 
 The HexStrike MCP bridge runs locally beside OpenCode. Its HTTP backend can run on the same machine or on another trusted machine in the local network; `setup.sh` configures either mode.
 
+In local mode, setup can install `redcode-hexstrike.service` so the backend starts automatically with Ubuntu and restarts after failures.
+
 ## Skills
 
 Skills auto-load based on context. Available skill packs:

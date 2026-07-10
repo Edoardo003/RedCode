@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$PROJECT_DIR"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -130,6 +133,47 @@ info "Installing HexStrike bridge dependencies..."
 pip3 install -r hexstrike-ai/requirements.txt
 ok "HexStrike dependencies installed"
 
+if [ "$HEXSTRIKE_MODE" = "local" ]; then
+  echo ""
+  echo -e "${CYAN}HexStrike system service${NC}"
+  echo -e "Install and start HexStrike with systemd? [${YELLOW}Y/n${NC}]"
+  read -r service_choice
+  service_choice="${service_choice:-y}"
+
+  if [[ "$service_choice" =~ ^[Yy]$ ]]; then
+    if [ "${EUID}" -ne 0 ]; then
+      warn "Run setup as root to install the systemd service."
+    elif ! command -v systemctl &>/dev/null; then
+      warn "systemd is not available; start HexStrike manually."
+    else
+      python_bin="$(command -v python3)"
+      service_file="/etc/systemd/system/redcode-hexstrike.service"
+
+      {
+        echo "[Unit]"
+        echo "Description=RedCode HexStrike backend"
+        echo "After=network-online.target"
+        echo "Wants=network-online.target"
+        echo ""
+        echo "[Service]"
+        echo "Type=simple"
+        echo "WorkingDirectory=${PROJECT_DIR}/hexstrike-ai"
+        echo "ExecStart=${python_bin} ${PROJECT_DIR}/hexstrike-ai/hexstrike_server.py --port 8888"
+        echo "Restart=on-failure"
+        echo "RestartSec=5"
+        echo "Environment=PYTHONUNBUFFERED=1"
+        echo ""
+        echo "[Install]"
+        echo "WantedBy=multi-user.target"
+      } > "$service_file"
+
+      systemctl daemon-reload
+      systemctl enable --now redcode-hexstrike.service
+      ok "HexStrike systemd service enabled and started"
+    fi
+  fi
+fi
+
 info "Installing local Python MCP servers..."
 pip3 install mcp-server-fetch mcp-server-sqlite
 ok "Python MCP servers installed"
@@ -161,7 +205,11 @@ echo ""
 ok "Setup complete"
 echo ""
 if [ "$HEXSTRIKE_MODE" = "local" ]; then
-  echo "1. Start HexStrike: cd hexstrike-ai && python3 hexstrike_server.py --port 8888"
+  if command -v systemctl &>/dev/null && systemctl is-active --quiet redcode-hexstrike.service; then
+    echo "1. HexStrike service is active: systemctl status redcode-hexstrike"
+  else
+    echo "1. Start HexStrike: cd hexstrike-ai && python3 hexstrike_server.py --port 8888"
+  fi
 else
   echo "1. Make sure the LAN HexStrike backend remains reachable at $HEXSTRIKE_URL"
 fi
