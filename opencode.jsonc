@@ -29,15 +29,6 @@
       ],
     },
 
-    // Brave Search — OSINT, CVE lookup, exploit research, bug bounty write-ups
-    "brave-search": {
-      "type": "local",
-      "command": ["npx", "-y", "@brave/brave-search-mcp-server"],
-      "environment": {
-        "BRAVE_API_KEY": "{env:BRAVE_API_KEY}",
-      },
-    },
-
     // Playwright — browser automation for verifying web vulns, screenshots, auth flows
     "playwright": {
       "type": "local",

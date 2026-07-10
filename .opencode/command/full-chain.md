@@ -51,9 +51,9 @@ Delegate to @recon with: "MODE: AGGRESSIVE — run passive + active recon immedi
 
 Delegate to @osint with: "MODE: AGGRESSIVE — run ALL OSINT techniques on [target]. Domains: [full subdomain list]. Org info from recon: [WHOIS data, registrant, tech stack]. Read recon data from output/{target}/recon/findings.json. Execute ALL techniques without confirmation."
 
-- Email harvesting: Google dorking, HexStrike `bugbounty_osint_gathering`, Brave Search
+- Email harvesting: HexStrike `bugbounty_osint_gathering`, theHarvester, and public sources
 - Username enumeration: social media profiling, platform searches
-- Breach/credential lookup: Brave Search for paste sites, breach databases
+- Breach/credential lookup: authorized public breach sources and HexStrike OSINT tools
 - Metadata extraction: document harvesting, EXIF, exposed files
 - Technology intelligence: tech stack enrichment, vendor identification
 - **VERIFY**: @osint ran at least 3 OSINT techniques and produced actionable intelligence

@@ -11,9 +11,9 @@ $ARGUMENTS
 
 1. Review recon results from `output/{target}/recon/` if available — ingest subdomains, WHOIS, tech stack
 2. Run `bugbounty_osint_gathering` for full-spectrum domain/org intelligence
-3. Email harvesting: Google dorking via Brave Search (`site:target.com "@target.com"`, `intext:"@target.com" filetype:pdf`)
+3. Email harvesting: use HexStrike OSINT tools, theHarvester, and public documents
 4. Username enumeration: search social platforms, code repos, forums for employees
-5. Breach/credential lookup: Brave Search for paste sites, breach databases, exposed credentials
+5. Breach/credential lookup: use only authorized public breach sources and HexStrike OSINT tools
 6. Google dorking: exposed panels, sensitive files, directory listings, backup files
 7. Metadata extraction: harvest documents, analyze EXIF/metadata for internal paths, usernames, software
 8. Persist leaked credentials to SQLite immediately

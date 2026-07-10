@@ -47,8 +47,19 @@ require_command opencode "Install it from https://opencode.ai/docs/."
 require_command git "Install Git with your system package manager."
 require_command python3 "Install Python 3.10 or newer."
 require_command pip3 "Install pip for Python 3."
-require_command npx "Install Node.js 18 or newer."
+require_command node "Install Node.js 22 LTS or newer."
+require_command npx "Install Node.js 22 LTS or newer."
 require_command curl "Install curl with your system package manager."
+
+if command -v node &>/dev/null; then
+  node_major="$(node --version | sed -E 's/^v([0-9]+).*/\1/')"
+  if [ "$node_major" -lt 22 ]; then
+    fail "Node.js 22 or newer is required; found $(node --version)."
+    missing=1
+  else
+    ok "Node.js $(node --version) is supported"
+  fi
+fi
 
 if [ "$missing" -ne 0 ]; then
   fail "Install the missing prerequisites and run setup again."
@@ -94,19 +105,6 @@ set_env HEXSTRIKE_MODE "$HEXSTRIKE_MODE"
 set_env HEXSTRIKE_URL "$HEXSTRIKE_URL"
 export HEXSTRIKE_MODE HEXSTRIKE_URL
 ok "HexStrike backend configured at $HEXSTRIKE_URL"
-
-if [ -z "${BRAVE_API_KEY:-}" ]; then
-  echo ""
-  echo -e "${CYAN}Brave Search${NC}"
-  echo "Enter BRAVE_API_KEY, or press Enter to leave Brave Search unavailable:"
-  read -r brave_key
-  if [ -n "$brave_key" ]; then
-    set_env BRAVE_API_KEY "$brave_key"
-    BRAVE_API_KEY="$brave_key"
-    export BRAVE_API_KEY
-    ok "BRAVE_API_KEY saved"
-  fi
-fi
 
 info "Creating project directories..."
 mkdir -p output wordlists templates/nuclei/custom
@@ -180,7 +178,6 @@ ok "Python MCP servers installed"
 
 info "Preparing local Node MCP servers..."
 npx -y @modelcontextprotocol/server-filesystem --help &>/dev/null || true
-npx -y @brave/brave-search-mcp-server --help &>/dev/null || true
 npx -y @playwright/mcp@latest --help &>/dev/null || true
 npx -y playwright install chromium
 ok "Node MCP servers and Chromium ready"
@@ -195,10 +192,6 @@ elif [ "$HEXSTRIKE_MODE" = "local" ]; then
 else
   warn "The LAN backend did not answer at ${HEXSTRIKE_URL}/health."
   warn "Check its bind address, firewall, and that both machines are on the trusted LAN."
-fi
-
-if [ -z "${BRAVE_API_KEY:-}" ]; then
-  warn "BRAVE_API_KEY is empty; Brave Search MCP will not work until it is configured."
 fi
 
 echo ""

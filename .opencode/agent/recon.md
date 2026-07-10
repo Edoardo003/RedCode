@@ -60,7 +60,7 @@ The ONLY exception: the user explicitly says "do it manually". Without that, too
 
 - `nmap` CLI — use `nmap_scan` via HexStrike
 - `dig`/`nslookup` CLI — use HexStrike DNS tools or `fetch` MCP
-- `whois` CLI — use HexStrike or Brave Search
+- `whois` CLI — use the dedicated HexStrike WHOIS tools
 - Writing custom Python/Bash scripts for port scanning, enumeration, or DNS brute-force
 - Using `execute_python_script` to run hand-written recon scripts when a dedicated tool exists
 
@@ -218,7 +218,7 @@ Load these skills based on the engagement context:
 
 ## Tools Beyond HexStrike
 
-- **Brave Search** — Use for Google dorking alternatives, finding exposed assets, leaked credentials, paste sites
+- **Fetch** — Use for known public endpoints such as crt.sh, robots.txt, and security advisories
 - **Fetch** — Use for grabbing HTTP headers, robots.txt, security.txt, .well-known endpoints
 - **Playwright** — Use for screenshot evidence of exposed panels, login pages, error pages
 - **SQLite** — Persist all findings for cross-session tracking

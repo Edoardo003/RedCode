@@ -252,7 +252,7 @@ Save generated artifacts to `output/{target}/socialeng/artifacts/`:
 
 ## Tools
 
-- **Brave Search** — Research target's email security posture (SPF/DKIM/DMARC records), find real communication samples to mimic
+- **HexStrike and Fetch** — Research public email security posture and retrieve explicitly known public sources
 - **Fetch** — Grab real login pages for cloning, download CSS/images, check email headers
 - **Playwright** — Screenshot login pages for accurate cloning, render and test credential harvesting pages, verify phishing pages look correct
 - **SQLite** — Persist findings, read OSINT data, store generated artifact metadata

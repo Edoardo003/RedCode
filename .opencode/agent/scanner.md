@@ -41,7 +41,7 @@ Your scan is NOT complete until:
 
 Before reporting any CVE-based finding:
 
-1. **Verify the CVE number is real** — search via `searchsploit` or Brave Search
+1. **Verify the CVE number is real** — use `searchsploit` and authoritative vendor or NVD references
 2. **Verify the vulnerability TYPE** — if the CVE is XSS, report it as XSS, NOT RCE
 3. **Verify the affected software AND version match** — wrong version = not applicable, do NOT report
 4. **If nuclei reports a CVE, cross-check** the CVE description against what nuclei actually tested

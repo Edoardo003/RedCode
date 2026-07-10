@@ -18,9 +18,8 @@ Inside OpenCode, type `/target example.com` to begin.
 ## Prerequisites
 
 - [OpenCode](https://opencode.ai/docs) installed
-- Node.js 18+ (for MCP servers)
+- Node.js 22+ LTS (for MCP servers)
 - Python 3.10+ (for HexStrike)
-- [Brave Search API key](https://brave.com/search/api/) (free tier, for OSINT)
 
 ## Architecture
 
@@ -78,7 +77,6 @@ Agent models come from the OpenCode Go plan and are configured only in `opencode
 | ---------------- | ---------------------------------------------------------------------- |
 | **HexStrike**    | 150+ security tools (nmap, nuclei, sqlmap, gobuster, metasploit, etc.) |
 | **Filesystem**   | Read/write output directory, templates, wordlists                      |
-| **Brave Search** | OSINT, CVE lookup, exploit research, bug bounty write-ups              |
 | **Playwright**   | Browser automation — verify XSS, take screenshot evidence              |
 | **Fetch**        | HTTP client — test API endpoints, custom requests                      |
 | **SQLite**       | Persist findings across sessions, track assessment progress            |
@@ -106,7 +104,6 @@ Copy `.env.example` to `.env` and set:
 ```bash
 HEXSTRIKE_MODE=local                           # local or lan
 HEXSTRIKE_URL=http://127.0.0.1:8888           # Local or LAN HexStrike backend
-BRAVE_API_KEY=BSA...                           # From brave.com/search/api
 REDCODE_DB=./redcode.db                        # SQLite database path
 ```
 

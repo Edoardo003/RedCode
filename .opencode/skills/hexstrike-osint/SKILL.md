@@ -37,8 +37,8 @@ That's it. This tool runs a comprehensive workflow internally:
 
 Despite being comprehensive, this tool does NOT replace:
 
-- **Deep Google dorking** — use Brave Search for targeted dork queries
-- **Manual breach database queries** — use Brave Search for HIBP and specific breach lookup
+- **Deep search analysis** — use results returned by authorized HexStrike OSINT tools
+- **Manual breach checks** — use authorized public breach sources when available
 - **Historical URL discovery** — use `gau_discovery` and `waybackurls_discovery`
 - **Detailed endpoint crawling** — use `hakrawler_crawl`
 - **Username-specific enumeration** — use `sherlock` for individual usernames
@@ -53,7 +53,7 @@ The tool respects `http_proxy`/`https_proxy` environment variables (auto-exporte
 
 1. **Timeout**: This tool runs many subtasks. If it times out, results may be partial — check output for what completed.
 2. **Partial results**: Some internal modules may fail (API keys missing, rate limits). Use the partial data and supplement with individual tools.
-3. **No results**: Domain may be too new or obscure. Fall back to manual OSINT via Brave Search dorking.
+3. **No results**: Domain may be too new or obscure. Try individual HexStrike OSINT tools and public archives.
 4. **MCP connection issues**: Retry once. If it fails again, run individual tools (theharvester, amass_enum, sherlock) separately.
 
 ## Output Interpretation

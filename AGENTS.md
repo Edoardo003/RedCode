@@ -135,7 +135,6 @@ Browse via the filesystem MCP to find the right list for the task.
 
 - **HexStrike AI** — 150+ tool di sicurezza (nmap, nuclei, sqlmap, gobuster, metasploit, etc.) — timeout 1 ora
 - **Filesystem** — Gestione file output, template, wordlists
-- **Brave Search** — OSINT, CVE lookup, exploit research
 - **Playwright** — Browser automation per verifiche web
 - **Fetch** — HTTP client per testing endpoint
 - **SQLite** — Persistenza findings e tracking assessment
