@@ -1,156 +1,152 @@
 # RedCode
 
-Cybersecurity automation platform built on [OpenCode](https://opencode.ai). Transforms OpenCode into a full security assessment toolkit for bug bounty, penetration testing, and red teaming.
+RedCode is an Ubuntu-based OpenCode workspace for authorized security assessments and CTF challenges. It keeps an assessment workflow and a CTF workflow separate, while `redcode` remains the main orchestrator for both.
 
-RedCode is designed to run on Ubuntu. Windows can be used to edit and manage the repository, while setup and security tooling run on the Ubuntu host or VM.
+## What It Includes
+
+- Assessment orchestration: recon, OSINT, scanning, exploitation, reporting, and resumable checkpoints.
+- HexStrike backend managed locally or consumed from a trusted LAN host.
+- Local MCP bridges for HexStrike, filesystem access, Playwright, Fetch, and SQLite.
+- CTF specialist for web, pwn, reverse engineering, crypto, forensics, OSINT, and misc challenges.
+- OpenCode Go models configured per agent in `opencode.jsonc`.
+
+## Platform
+
+RedCode runs on Ubuntu. Windows is suitable for editing the repository, commits, and GitHub operations; run setup, MCPs, HexStrike, and security tooling on the Ubuntu VM or server.
+
+## Requirements
+
+- OpenCode installed for the account that runs RedCode.
+- Ubuntu with Python 3.10+, pip, Git, curl, and Node.js 22+ LTS.
+- Root access only when installing the optional `systemd` service for a local HexStrike backend.
 
 ## Quick Start
 
+On the Ubuntu host:
+
 ```bash
-git clone https://github.com/YOUR_USER/redcode
-cd redcode
-chmod +x setup.sh && ./setup.sh
+git clone https://github.com/Edoardo003/RedCode.git
+cd RedCode
+chmod +x setup.sh redcode install-tools.sh
+./setup.sh
 ./redcode
 ```
 
-Inside OpenCode, type `/target example.com` to begin.
+`setup.sh` asks where the HexStrike HTTP backend runs:
 
-## Prerequisites
+- `local`: installs dependencies and can enable `redcode-hexstrike.service`.
+- `lan`: keeps the MCP bridge local to OpenCode while connecting it to a trusted LAN backend URL.
 
-- [OpenCode](https://opencode.ai/docs) installed
-- Node.js 22+ LTS (for MCP servers)
-- Python 3.10+ (for HexStrike)
+Check runtime status with:
 
-## Architecture
-
-```
-opencode (runtime)
-├── opencode.jsonc          ← providers, MCP servers, agent config
-└── .opencode/
-    ├── agent/              ← agent system prompts
-    │   ├── redcode.md    ← orchestrator (routes to other agents)
-    │   ├── recon.md        ← reconnaissance
-    │   ├── scanner.md      ← vulnerability scanning
-    │   ├── exploiter.md    ← exploit research (o3 reasoning)
-    │   ├── ctf.md          ← CTF specialist
-    │   └── reporter.md     ← report writing
-    ├── command/            ← slash commands
-    │   ├── target.md       ← /target → @recon
-    │   ├── scan.md         ← /scan → @scanner
-    │   ├── exploit.md      ← /exploit → @exploiter
-    │   ├── ctf.md          ← /ctf → @ctf
-    │   ├── report.md       ← /report → @reporter
-    │   └── full-chain.md   ← /full-chain → full pipeline
-    └── skills/             ← loadable skill packs
-        ├── bug-bounty/
-        ├── web-pentest/
-        ├── api-pentest/
-        ├── cloud-pentest/
-        ├── network-pentest/
-        ├── osint/
-        └── report-writing/
+```bash
+./redcode mcp list
+systemctl status redcode-hexstrike.service
 ```
 
-## Agents
-
-| Agent                      | Purpose                                                        |
-| -------------------------- | -------------------------------------------------------------- |
-| **redcode** (orchestrator) | Routes tasks, manages pipeline, asks for confirmation          |
-| **@recon**                 | Target enumeration, OSINT, subdomain discovery, port scanning  |
-| **@scanner**               | Nuclei, nikto, fuzzing, automated vulnerability detection      |
-| **@exploiter**             | Exploit chains, bypass techniques, deep vulnerability analysis |
-| **@ctf**                   | CTF challenges, local solvers, binary analysis, and write-ups   |
-| **@reporter**              | Professional reports for HackerOne, Bugcrowd, or clients       |
-
-Agent models come from the OpenCode Go plan and are configured only in `opencode.jsonc`.
-
-## Commands
-
-| Command                | Description                                   |
-| ---------------------- | --------------------------------------------- |
-| `/target <domain>`     | Start reconnaissance on a target              |
-| `/scan`                | Run vulnerability scans on recon results      |
-| `/exploit`             | Analyze vulnerabilities and research exploits |
-| `/ctf <challenge>`     | Start or resume an authorized CTF challenge   |
-| `/report`              | Write vulnerability report                    |
-| `/full-chain <domain>` | Run the full assessment pipeline end-to-end   |
-
-## MCP Servers
-
-| Server           | Purpose                                                                |
-| ---------------- | ---------------------------------------------------------------------- |
-| **HexStrike**    | 150+ security tools (nmap, nuclei, sqlmap, gobuster, metasploit, etc.) |
-| **Filesystem**   | Read/write output directory, templates, wordlists                      |
-| **Playwright**   | Browser automation — verify XSS, take screenshot evidence              |
-| **Fetch**        | HTTP client — test API endpoints, custom requests                      |
-| **SQLite**       | Persist findings across sessions, track assessment progress            |
-
-The HexStrike MCP bridge runs locally beside OpenCode. Its HTTP backend can run on the same machine or on another trusted machine in the local network; `setup.sh` configures either mode.
-
-In local mode, setup can install `redcode-hexstrike.service` so the backend starts automatically with Ubuntu and restarts after failures.
-
-## Skills
-
-Skills auto-load based on context. Available skill packs:
-
-- **bug-bounty** — Platform rules, scope management, submission best practices
-- **web-pentest** — OWASP Top 10, injection techniques, auth testing
-- **api-pentest** — REST/GraphQL testing, auth bypass, rate limiting
-- **cloud-pentest** — AWS/GCP/Azure misconfigurations, IAM, storage exposure
-- **network-pentest** — Service exploitation, lateral movement, protocol attacks
-- **osint** — Intelligence gathering, source prioritization, OPSEC
-- **report-writing** — Professional formatting, evidence standards, CVSS methodology
-- **ctf-web**, **ctf-pwn**, **ctf-rev**, **ctf-crypto**, **ctf-forensics**, **ctf-osint**, **ctf-misc** — Category-specific CTF workflows
+Run `./install-tools.sh` separately on the host that runs HexStrike when the full optional security and CTF toolset is needed.
 
 ## Configuration
 
-Copy `.env.example` to `.env` and set:
+Copy `.env.example` to `.env` if setup has not already created it:
 
 ```bash
-HEXSTRIKE_MODE=local                           # local or lan
-HEXSTRIKE_URL=http://127.0.0.1:8888           # Local or LAN HexStrike backend
-REDCODE_DB=./redcode.db                        # SQLite database path
+HEXSTRIKE_MODE=local
+HEXSTRIKE_URL=http://127.0.0.1:8888
+REDCODE_DB=./redcode.db
+BURP_MCP_URL=
+PROXY_URL=
 ```
 
-## Output Structure
+Burp is disabled by default. Enable it in `opencode.jsonc` only after configuring its trusted remote URL.
 
-All results are saved to `output/`:
+## Architecture
 
+```text
+User
+  -> redcode (main orchestrator)
+       -> assessment agents: recon, osint, scanner, exploiter, reporter
+       -> ctf agent: challenge classification, solver workflow, write-up
+       -> support agents: socialeng, templates
+       -> local MCP bridges
+            -> HexStrike HTTP backend
+            -> filesystem, Playwright, Fetch, SQLite
 ```
-output/
-└── example.com/
-    ├── recon/          ← Target enumeration results
-    │   └── raw/        ← Raw tool output
-    ├── osint/          ← Intelligence findings
-    ├── scans/          ← Vulnerability scan results
-    │   └── raw/        ← Raw tool output
-    ├── exploits/       ← Verified exploitation evidence
-    └── reports/        ← Final vulnerability reports
+
+Agent models are intentionally configured only in `opencode.jsonc`, which is the source of truth for the OpenCode Go plan.
+
+## Assessment Commands
+
+| Command | Purpose |
+| --- | --- |
+| `/target <domain>` | Start reconnaissance on a declared target. |
+| `/osint <target>` | Gather authorized intelligence. |
+| `/scan <target>` | Run vulnerability scanning from prior findings. |
+| `/exploit <finding>` | Investigate selected, authorized findings. |
+| `/report [format]` | Generate a security report from collected evidence. |
+| `/full-chain <target>` | Run the five-phase assessment pipeline. |
+| `/resume <target>` | Resume a checkpointed assessment phase. |
+
+Assessment results live under:
+
+```text
+output/{target}/
+  recon/
+  osint/
+  scans/
+  exploits/
+  reports/
 ```
 
-CTF work is isolated from assessments:
+## CTF Workflow
 
+Use `/ctf` only for a named competition, local lab, supplied artifact, or explicitly provided challenge URL.
+
+```text
+/ctf web juiceshop local-lab http://127.0.0.1:3000
+/ctf rev crackme local-lab ./artifacts/crackme
+/ctf crypto rsa-warmup spring-ctf ./artifacts/challenge.txt
 ```
+
+`@ctf` chooses the matching category skill:
+
+- `ctf-web`
+- `ctf-pwn`
+- `ctf-rev`
+- `ctf-crypto`
+- `ctf-forensics`
+- `ctf-osint`
+- `ctf-misc`
+
+CTF work is isolated from assessment data and may use local solvers and debuggers:
+
+```text
 output/ctf/{event}/{challenge}/
-├── artifacts/          ← Original and working challenge files
-├── solver/             ← Local solver or exploit revisions
-├── evidence/           ← Tool output and screenshots
-├── progress.json       ← Resume checkpoint
-└── writeup.md          ← Reproducible solution
+  artifacts/
+  solver/
+  evidence/
+  progress.json
+  writeup.md
 ```
 
-## How It Works
+Flags, attachments, solver output, and event-specific data stay inside ignored output directories. RedCode verifies flag candidates but never submits them automatically.
 
-1. **You** open `opencode` in the redcode directory
-2. **Build agent** greets you, asks about the target and scope
-3. **You** type `/target example.com` or describe what you want
-4. **Orchestrator** proposes a plan and asks for confirmation
-5. **Specialized agents** execute each phase, reporting back
-6. **You** confirm before each phase transition
-7. **Reporter** generates platform-ready reports
+## Local Juice Shop Test
 
-The entire flow is interactive — nothing runs without your approval.
+Juice Shop is an optional local test for the `ctf-web` workflow. With Docker installed on the Ubuntu host, bind it only to loopback:
 
-## Legal
+```bash
+docker run --rm --name redcode-juiceshop -p 127.0.0.1:3000:3000 bkimminich/juice-shop
+```
 
-This tool is for **authorized security testing only**. Always ensure you have written permission before testing any target. Unauthorized access to computer systems is illegal.
+Then use:
+
+```text
+/ctf web juiceshop local-lab http://127.0.0.1:3000
+```
+
+This tests CTF routing, local web scope, evidence storage, checkpoints, and write-up generation. It does not replace category fixtures for pwn, reverse, crypto, or forensics.
+
+## Legal Use
+
+Use RedCode only against authorized assessment targets, local labs, or explicitly scoped CTF challenges. Keep challenge and assessment scope separate, and never direct CTF tooling at unrelated public systems.
