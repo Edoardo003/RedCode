@@ -463,6 +463,7 @@ else
 fi
 
 pip_install stegsolve  "stegsolve" 2>/dev/null || true
+pip_install z3         "z3-solver"
 pip_install outguess   "outguess" 2>/dev/null || {
   try_install outguess apt-get install -y -qq outguess
 }

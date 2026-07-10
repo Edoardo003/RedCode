@@ -91,6 +91,11 @@
       "steps": 40,
     },
 
+    "ctf": {
+      "model": "opencode-go/kimi-k2.7-code",
+      "steps": 60,
+    },
+
     "reporter": {
       "model": "opencode-go/glm-5.2",
       "steps": 30,

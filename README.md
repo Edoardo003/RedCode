@@ -32,11 +32,13 @@ opencode (runtime)
     │   ├── recon.md        ← reconnaissance
     │   ├── scanner.md      ← vulnerability scanning
     │   ├── exploiter.md    ← exploit research (o3 reasoning)
+    │   ├── ctf.md          ← CTF specialist
     │   └── reporter.md     ← report writing
     ├── command/            ← slash commands
     │   ├── target.md       ← /target → @recon
     │   ├── scan.md         ← /scan → @scanner
     │   ├── exploit.md      ← /exploit → @exploiter
+    │   ├── ctf.md          ← /ctf → @ctf
     │   ├── report.md       ← /report → @reporter
     │   └── full-chain.md   ← /full-chain → full pipeline
     └── skills/             ← loadable skill packs
@@ -57,6 +59,7 @@ opencode (runtime)
 | **@recon**                 | Target enumeration, OSINT, subdomain discovery, port scanning  |
 | **@scanner**               | Nuclei, nikto, fuzzing, automated vulnerability detection      |
 | **@exploiter**             | Exploit chains, bypass techniques, deep vulnerability analysis |
+| **@ctf**                   | CTF challenges, local solvers, binary analysis, and write-ups   |
 | **@reporter**              | Professional reports for HackerOne, Bugcrowd, or clients       |
 
 Agent models come from the OpenCode Go plan and are configured only in `opencode.jsonc`.
@@ -68,6 +71,7 @@ Agent models come from the OpenCode Go plan and are configured only in `opencode
 | `/target <domain>`     | Start reconnaissance on a target              |
 | `/scan`                | Run vulnerability scans on recon results      |
 | `/exploit`             | Analyze vulnerabilities and research exploits |
+| `/ctf <challenge>`     | Start or resume an authorized CTF challenge   |
 | `/report`              | Write vulnerability report                    |
 | `/full-chain <domain>` | Run the full assessment pipeline end-to-end   |
 
@@ -96,6 +100,7 @@ Skills auto-load based on context. Available skill packs:
 - **network-pentest** — Service exploitation, lateral movement, protocol attacks
 - **osint** — Intelligence gathering, source prioritization, OPSEC
 - **report-writing** — Professional formatting, evidence standards, CVSS methodology
+- **ctf-web**, **ctf-pwn**, **ctf-rev**, **ctf-crypto**, **ctf-forensics**, **ctf-osint**, **ctf-misc** — Category-specific CTF workflows
 
 ## Configuration
 
@@ -121,6 +126,17 @@ output/
     │   └── raw/        ← Raw tool output
     ├── exploits/       ← Verified exploitation evidence
     └── reports/        ← Final vulnerability reports
+```
+
+CTF work is isolated from assessments:
+
+```
+output/ctf/{event}/{challenge}/
+├── artifacts/          ← Original and working challenge files
+├── solver/             ← Local solver or exploit revisions
+├── evidence/           ← Tool output and screenshots
+├── progress.json       ← Resume checkpoint
+└── writeup.md          ← Reproducible solution
 ```
 
 ## How It Works

@@ -19,6 +19,7 @@ User → OpenCode TUI → Orchestrator (redcode)
                           ├── @recon      → HexStrike MCP
                           ├── @scanner    → HexStrike MCP
                           ├── @exploiter  → HexStrike MCP
+                          ├── @ctf        → CTF skills and local tooling
                           ├── @templates  → Nuclei YAML
                           └── @reporter   → templates/
 ```
@@ -31,6 +32,7 @@ User → OpenCode TUI → Orchestrator (redcode)
 | `@recon`     | Reconnaissance, OSINT, subdomain enum         |
 | `@scanner`   | Vulnerability scanning, nuclei, nikto         |
 | `@exploiter` | Exploit research, attack chain reasoning      |
+| `@ctf`       | Challenge solving, local solver e write-up    |
 | `@templates` | Nuclei template creation from findings        |
 | `@reporter`  | Report writing multi-formato                  |
 
@@ -41,6 +43,7 @@ User → OpenCode TUI → Orchestrator (redcode)
 | `/target <domain>`     | Avvia reconnaissance su un target                        |
 | `/scan <target>`       | Avvia vulnerability scanning                             |
 | `/exploit <vuln>`      | Ricerca exploit e tecniche di bypass                     |
+| `/ctf <challenge>`     | Avvia o riprende una challenge CTF autorizzata           |
 | `/report`              | Genera report di sicurezza                               |
 | `/full-chain <target>` | Pipeline completa: recon → osint → scan → exploit → report |
 
@@ -55,6 +58,7 @@ Carica una skill con il tool `skill` durante la conversazione:
 - `network-pentest` — Network penetration testing
 - `osint` — Open Source Intelligence gathering
 - `report-writing` — Security report writing
+- `ctf-web`, `ctf-pwn`, `ctf-rev`, `ctf-crypto`, `ctf-forensics`, `ctf-osint`, `ctf-misc` — Workflow CTF per categoria
 
 ## Handoff Format
 
