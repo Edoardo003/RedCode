@@ -9,12 +9,11 @@ if [ -f "$DIR/.env" ]; then
   set +a
 fi
 
-: "${LM_STUDIO_URL:=http://10.10.10.55:1234/v1}"
 : "${HEXSTRIKE_URL:=http://localhost:8888}"
 : "${REDCODE_DB:=$DIR/redcode.db}"
 : "${BRAVE_API_KEY:=}"
 : "${PROXY_URL:=}"
-export LM_STUDIO_URL HEXSTRIKE_URL REDCODE_DB BRAVE_API_KEY PROXY_URL
+export HEXSTRIKE_URL REDCODE_DB BRAVE_API_KEY PROXY_URL
 
 # Export standard proxy env vars so tools that read http_proxy/https_proxy get proxy support for free
 if [ -n "$PROXY_URL" ]; then

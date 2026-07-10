@@ -19,10 +19,9 @@ Read findings from all previous phases (using per-target directories):
 1. `output/{target}/recon/findings.json` — reconnaissance data
 2. `output/{target}/scans/findings.json` — vulnerability scan results
 3. `output/{target}/exploits/findings.json` — exploit analysis
-4. `output/{target}/pocs/` — proof-of-concept scripts (list files)
-5. SQLite: `SELECT * FROM findings WHERE target_id = ? ORDER BY severity, phase`
-6. SQLite: `SELECT * FROM credentials WHERE target_id = ?` — discovered credentials
-7. Templates in `templates/` directory (read via filesystem MCP):
+4. SQLite: `SELECT * FROM findings WHERE target_id = ? ORDER BY severity, phase`
+5. SQLite: `SELECT * FROM credentials WHERE target_id = ?` — discovered credentials
+6. Templates in `templates/` directory (read via filesystem MCP):
    - `templates/hackerone.md` — HackerOne submission format
    - `templates/bugcrowd.md` — Bugcrowd VRT-based format
    - `templates/generic.md` — Comprehensive pentest report format

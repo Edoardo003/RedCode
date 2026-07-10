@@ -9,7 +9,7 @@ $ARGUMENTS
 
 ## Instructions
 
-1. Review recon results from `output/recon/` if available — ingest subdomains, WHOIS, tech stack
+1. Review recon results from `output/{target}/recon/` if available — ingest subdomains, WHOIS, tech stack
 2. Run `bugbounty_osint_gathering` for full-spectrum domain/org intelligence
 3. Email harvesting: Google dorking via Brave Search (`site:target.com "@target.com"`, `intext:"@target.com" filetype:pdf`)
 4. Username enumeration: search social platforms, code repos, forums for employees
@@ -21,4 +21,4 @@ $ARGUMENTS
 10. Present findings grouped by intelligence type (email, username, credential, profile, breach, document, exposure)
 11. For each finding include: type, confidence, source, raw evidence, actionable next steps
 
-Save all results to `output/osint/`.
+Save all results to `output/{target}/osint/`.

@@ -8,35 +8,31 @@ Extension di OpenCode specializzata per bug bounty, penetration testing e red te
 # 1. Avvia HexStrike server
 cd hexstrike-ai && python3 hexstrike_server.py --port 8888
 
-# 2. Avvia LM Studio con Qwen 3.5 9B sulla macchina locale
-
-# 3. Avvia OpenCode da questa directory
+# 2. Avvia OpenCode da questa directory
 cd /opt/Progetti/redcode && opencode
 ```
 
 ## Architecture
 
 ```
-User → OpenCode TUI → Orchestrator (redcode, Claude Sonnet 4.6)
-                          ├── @recon      → Claude Haiku 4.5    → HexStrike MCP
-                          ├── @scanner    → GPT-5.4-mini        → HexStrike MCP
-                          ├── @exploiter  → GPT-5.4             → HexStrike MCP
-                          ├── @poc        → Qwen 3.5 9B (local) → writes code
-                          ├── @templates  → Claude Haiku 4.5    → Nuclei YAML
-                          └── @reporter   → Claude Sonnet 4.6   → templates/
+User → OpenCode TUI → Orchestrator (redcode)
+                          ├── @recon      → HexStrike MCP
+                          ├── @scanner    → HexStrike MCP
+                          ├── @exploiter  → HexStrike MCP
+                          ├── @templates  → Nuclei YAML
+                          └── @reporter   → templates/
 ```
 
 ## Agents
 
-| Agent        | Model               | Funzione                                      |
-| ------------ | ------------------- | --------------------------------------------- |
-| `redcode`    | Claude Sonnet 4.6   | Orchestratore principale, routing interattivo |
-| `@recon`     | Claude Haiku 4.5    | Reconnaissance, OSINT, subdomain enum         |
-| `@scanner`   | GPT-5.4-mini        | Vulnerability scanning, nuclei, nikto         |
-| `@exploiter` | GPT-5.4             | Exploit research, attack chain reasoning      |
-| `@poc`       | Qwen 3.5 9B (local) | PoC generation, uncensored                    |
-| `@templates` | Claude Haiku 4.5    | Nuclei template creation from findings        |
-| `@reporter`  | Claude Sonnet 4.6   | Report writing multi-formato                  |
+| Agent        | Funzione                                      |
+| ------------ | --------------------------------------------- |
+| `redcode`    | Orchestratore principale, routing interattivo |
+| `@recon`     | Reconnaissance, OSINT, subdomain enum         |
+| `@scanner`   | Vulnerability scanning, nuclei, nikto         |
+| `@exploiter` | Exploit research, attack chain reasoning      |
+| `@templates` | Nuclei template creation from findings        |
+| `@reporter`  | Report writing multi-formato                  |
 
 ## Commands
 
@@ -45,9 +41,8 @@ User → OpenCode TUI → Orchestrator (redcode, Claude Sonnet 4.6)
 | `/target <domain>`     | Avvia reconnaissance su un target                        |
 | `/scan <target>`       | Avvia vulnerability scanning                             |
 | `/exploit <vuln>`      | Ricerca exploit e tecniche di bypass                     |
-| `/poc <vuln-id>`       | Genera Proof of Concept                                  |
 | `/report`              | Genera report di sicurezza                               |
-| `/full-chain <target>` | Pipeline completo: recon → scan → exploit → poc → report |
+| `/full-chain <target>` | Pipeline completa: recon → osint → scan → exploit → report |
 
 ## Skills
 
@@ -63,18 +58,18 @@ Carica una skill con il tool `skill` durante la conversazione:
 
 ## Handoff Format
 
-All agents use this JSON format when saving findings to `output/{phase}/findings.json` and to the SQLite database. This enables structured handoff between phases.
+All agents use this JSON format when saving findings to `output/{target}/{phase}/findings.json` and to the SQLite database. This enables structured handoff between phases.
 
 ```json
 {
   "target": "example.com",
   "scope": "*.example.com",
-  "phase": "recon|scan|exploit|poc|report",
+  "phase": "recon|osint|scan|exploit|socialeng|report",
   "timestamp": "2025-01-15T10:30:00Z",
   "findings": [
     {
       "id": "FIND-001",
-      "type": "subdomain|port|service|vuln|exploit|poc",
+      "type": "subdomain|port|service|vuln|exploit|evidence",
       "severity": "critical|high|medium|low|info",
       "title": "SQL Injection in /api/search",
       "url": "https://example.com/api/search?q=test",
@@ -82,8 +77,8 @@ All agents use this JSON format when saving findings to `output/{phase}/findings
       "cvss": 8.1,
       "cwe": "CWE-89",
       "confidence": "confirmed|likely|potential",
-      "raw_path": "output/scans/raw/nuclei_001.txt",
-      "next_steps": ["Attempt exploitation", "Create PoC"]
+      "raw_path": "output/example.com/scans/raw/nuclei_001.txt",
+      "next_steps": ["Verify manually", "Collect reproducible evidence"]
     }
   ],
   "metadata": {
@@ -95,9 +90,9 @@ All agents use this JSON format when saving findings to `output/{phase}/findings
 
 Each agent:
 
-1. Reads previous phase findings from `output/{prev_phase}/findings.json` and SQLite
+1. Reads previous phase findings from `output/{target}/{prev_phase}/findings.json` and SQLite
 2. Does its work
-3. Saves structured findings to `output/{phase}/findings.json`
+3. Saves structured findings to `output/{target}/{phase}/findings.json`
 4. Persists each finding to the SQLite `findings` table
 
 ## SQLite Schema
@@ -130,7 +125,7 @@ Browse via the filesystem MCP to find the right list for the task.
 - L'orchestratore CHIEDE SEMPRE conferma prima di passare alla fase successiva
 - I risultati vanno salvati in `output/` nel formato handoff JSON sopra definito
 - Ogni finding va persistito anche nel database SQLite
-- I PoC devono includere: descrizione, impatto, passi per riprodurre, codice, remediation
+- Ogni exploit confermato deve conservare payload, comando, output, impatto e remediation
 - I report seguono i template in `templates/`
 - MAI eseguire exploit attivi senza conferma esplicita dell'utente
 - Tutti i test devono essere AUTORIZZATI — mai testare target senza permesso
@@ -147,5 +142,4 @@ Browse via the filesystem MCP to find the right list for the task.
 
 ## Provider
 
-- **GitHub Copilot Pro** — Claude Sonnet 4.6, GPT-5.4, GPT-5.4-mini, Claude Haiku 4.5
-- **LM Studio** — Qwen 3.5 9B uncensored per PoC generation
+- **OpenCode Go** — i modelli per agente sono configurati esclusivamente in `opencode.jsonc`

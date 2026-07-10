@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS findings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   target_id INTEGER REFERENCES targets(id),
   finding_id TEXT UNIQUE NOT NULL,
-  phase TEXT NOT NULL CHECK(phase IN ('recon','scan','exploit','poc','report')),
+  phase TEXT NOT NULL CHECK(phase IN ('recon','osint','scan','exploit','socialeng','report')),
   type TEXT NOT NULL,
   severity TEXT NOT NULL CHECK(severity IN ('critical','high','medium','low','info')),
   title TEXT NOT NULL,

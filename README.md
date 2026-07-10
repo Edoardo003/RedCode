@@ -2,13 +2,15 @@
 
 Cybersecurity automation platform built on [OpenCode](https://opencode.ai). Transforms OpenCode into a full security assessment toolkit for bug bounty, penetration testing, and red teaming.
 
+RedCode is designed to run on Ubuntu. Windows can be used to edit and manage the repository, while setup and security tooling run on the Ubuntu host or VM.
+
 ## Quick Start
 
 ```bash
 git clone https://github.com/YOUR_USER/redcode
 cd redcode
 chmod +x setup.sh && ./setup.sh
-opencode
+./redcode
 ```
 
 Inside OpenCode, type `/target example.com` to begin.
@@ -18,7 +20,6 @@ Inside OpenCode, type `/target example.com` to begin.
 - [OpenCode](https://opencode.ai/docs) installed
 - Node.js 18+ (for MCP servers)
 - Python 3.10+ (for HexStrike)
-- [LM Studio](https://lmstudio.ai) running `qwen3.5-9b-uncensored-hauhaucs-aggressive` (for PoC generation)
 - [Brave Search API key](https://brave.com/search/api/) (free tier, for OSINT)
 
 ## Architecture
@@ -32,13 +33,11 @@ opencode (runtime)
     │   ├── recon.md        ← reconnaissance
     │   ├── scanner.md      ← vulnerability scanning
     │   ├── exploiter.md    ← exploit research (o3 reasoning)
-    │   ├── poc.md          ← PoC code generation (local model)
     │   └── reporter.md     ← report writing
     ├── command/            ← slash commands
     │   ├── target.md       ← /target → @recon
     │   ├── scan.md         ← /scan → @scanner
     │   ├── exploit.md      ← /exploit → @exploiter
-    │   ├── poc.md          ← /poc → @poc
     │   ├── report.md       ← /report → @reporter
     │   └── full-chain.md   ← /full-chain → full pipeline
     └── skills/             ← loadable skill packs
@@ -53,14 +52,15 @@ opencode (runtime)
 
 ## Agents
 
-| Agent                      | Model              | Purpose                                                        |
-| -------------------------- | ------------------ | -------------------------------------------------------------- |
-| **redcode** (orchestrator) | claude-sonnet-4.6  | Routes tasks, manages pipeline, asks for confirmation          |
-| **@recon**                 | claude-haiku-4.5   | Target enumeration, OSINT, subdomain discovery, port scanning  |
-| **@scanner**               | gpt-5.4-mini       | Nuclei, nikto, fuzzing, automated vulnerability detection      |
-| **@exploiter**             | gpt-5.4            | Exploit chains, bypass techniques, deep vulnerability analysis |
-| **@poc**                   | qwen3.5-9b (local) | Proof-of-concept exploit code — runs on uncensored local model |
-| **@reporter**              | claude-sonnet-4.6  | Professional reports for HackerOne, Bugcrowd, or clients       |
+| Agent                      | Purpose                                                        |
+| -------------------------- | -------------------------------------------------------------- |
+| **redcode** (orchestrator) | Routes tasks, manages pipeline, asks for confirmation          |
+| **@recon**                 | Target enumeration, OSINT, subdomain discovery, port scanning  |
+| **@scanner**               | Nuclei, nikto, fuzzing, automated vulnerability detection      |
+| **@exploiter**             | Exploit chains, bypass techniques, deep vulnerability analysis |
+| **@reporter**              | Professional reports for HackerOne, Bugcrowd, or clients       |
+
+Agent models come from the OpenCode Go plan and are configured only in `opencode.jsonc`.
 
 ## Commands
 
@@ -69,7 +69,6 @@ opencode (runtime)
 | `/target <domain>`     | Start reconnaissance on a target              |
 | `/scan`                | Run vulnerability scans on recon results      |
 | `/exploit`             | Analyze vulnerabilities and research exploits |
-| `/poc`                 | Generate proof-of-concept code                |
 | `/report`              | Write vulnerability report                    |
 | `/full-chain <domain>` | Run the full assessment pipeline end-to-end   |
 
@@ -83,6 +82,8 @@ opencode (runtime)
 | **Playwright**   | Browser automation — verify XSS, take screenshot evidence              |
 | **Fetch**        | HTTP client — test API endpoints, custom requests                      |
 | **SQLite**       | Persist findings across sessions, track assessment progress            |
+
+The HexStrike MCP bridge runs locally beside OpenCode. Its HTTP backend can run on the same machine or on another trusted machine in the local network; `setup.sh` configures either mode.
 
 ## Skills
 
@@ -101,10 +102,10 @@ Skills auto-load based on context. Available skill packs:
 Copy `.env.example` to `.env` and set:
 
 ```bash
-LM_STUDIO_URL=http://10.10.10.55:1234/v1    # Your LM Studio endpoint
-BRAVE_API_KEY=BSA...                          # From brave.com/search/api
-HEXSTRIKE_URL=http://localhost:8888           # HexStrike API server
-REDCODE_DB=./redcode.db                       # SQLite database path
+HEXSTRIKE_MODE=local                           # local or lan
+HEXSTRIKE_URL=http://127.0.0.1:8888           # Local or LAN HexStrike backend
+BRAVE_API_KEY=BSA...                           # From brave.com/search/api
+REDCODE_DB=./redcode.db                        # SQLite database path
 ```
 
 ## Output Structure
@@ -113,13 +114,14 @@ All results are saved to `output/`:
 
 ```
 output/
-├── recon/          ← Target enumeration results
-│   └── raw/        ← Raw tool output
-├── scans/          ← Vulnerability scan results
-│   └── raw/        ← Raw tool output
-├── exploits/       ← Exploit analysis documents
-├── pocs/           ← Generated PoC code
-└── reports/        ← Final vulnerability reports
+└── example.com/
+    ├── recon/          ← Target enumeration results
+    │   └── raw/        ← Raw tool output
+    ├── osint/          ← Intelligence findings
+    ├── scans/          ← Vulnerability scan results
+    │   └── raw/        ← Raw tool output
+    ├── exploits/       ← Verified exploitation evidence
+    └── reports/        ← Final vulnerability reports
 ```
 
 ## How It Works

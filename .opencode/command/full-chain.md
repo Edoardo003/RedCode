@@ -1,5 +1,5 @@
 ---
-description: "Run full security assessment pipeline: recon -> osint -> scan -> exploit -> poc -> report. Supports --aggressive for full auto mode."
+description: "Run full security assessment pipeline: recon -> osint -> scan -> exploit -> report. Supports --aggressive for full auto mode."
 ---
 
 Run a FULL security assessment pipeline on:
@@ -28,8 +28,7 @@ This will automatically execute:
 3. All vulnerability scans
 4. Active exploitation (SQLi data extraction, brute-force, RCE, SSRF probing, etc.)
    — includes social engineering artifact generation (phishing, pretexting, credential harvesting)
-5. PoC generation and execution verification
-6. Final report compilation
+5. Final report compilation
 
 Confirm you have WRITTEN AUTHORIZATION for aggressive testing of [target]? (yes/no)
 ```
@@ -94,21 +93,11 @@ If @osint produced actionable people intelligence, also delegate to @socialeng: 
 
 - @socialeng generates ALL artifact types without confirmation
 - @socialeng does NOT deploy — artifacts are generated for user to review and decide
-- -> Auto-progress to Phase 5 when complete
+- -> Auto-progress to Phase 5 when complete, optionally creating Nuclei templates for confirmed findings
 
-**Phase 5 — PROOF OF CONCEPT** (auto)
+**Phase 5 — REPORTING** (auto)
 
-Delegate to @poc with each exploited finding: "MODE: AGGRESSIVE — write AND execute PoC with --check flag."
-
-- Write PoC for each confirmed exploitation
-- Execute PoC in `--check` mode to verify it works
-- If PoC fails, adjust and retry
-- Optionally delegate to @templates for Nuclei template creation
-- -> Auto-progress to Phase 6 when complete
-
-**Phase 6 — REPORTING** (auto)
-
-Delegate to @reporter: "Compile full report with all findings, exploitations, OSINT intelligence, social engineering artifacts, and PoC results across ALL subdomains."
+Delegate to @reporter: "Compile full report with all findings, exploitations, OSINT intelligence, and social engineering artifacts across ALL subdomains."
 
 - Ask format preference ONLY if not specified: hackerone / bugcrowd / generic
 - Include all exploitation evidence, extracted data, working payloads
@@ -161,19 +150,9 @@ Use @exploiter to attack selected vulnerabilities:
 - Construct and execute attack chains
 - If scope includes social engineering, offer to invoke @socialeng for artifact generation
 - Present exploitation results with evidence
-- **-> Ask which findings to create PoCs for**
+- **-> Ask whether to proceed to final reporting**
 
-### Phase 5 — PROOF OF CONCEPT
-
-Use @poc to generate PoC code:
-
-- Write working exploit code for confirmed exploitations
-- Include verification mode (--check flag)
-- Include remediation recommendations
-- Present PoCs for review
-- **-> Ask to approve PoCs before final reporting**
-
-### Phase 6 — REPORTING
+### Phase 5 — REPORTING
 
 Use @reporter to compile the final report:
 

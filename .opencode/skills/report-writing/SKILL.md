@@ -172,7 +172,7 @@ Be specific:
 - Map findings to VRT (Vulnerability Rating Taxonomy)
 - P1-P5 severity scale
 - Submission form has specific fields — fill all
-- Attach PoC files directly when possible
+- Attach reproducible requests, responses, screenshots, and tool evidence
 
 ## Templates
 

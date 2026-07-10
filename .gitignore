@@ -6,10 +6,10 @@
 output/
 redcode.db
 redcode.db-*
+*.log
 
 # Wordlists (downloaded at setup, too large for git)
-wordlists/*.txt
-wordlists/*.csv
+wordlists/
 
 # Dependencies
 node_modules/
@@ -25,3 +25,8 @@ __pycache__/
 
 # OpenCode state
 .opencode/state/
+.opencode/package-lock.json
+
+# Generated and local-only security data
+templates/nuclei/custom/
+Webshare_*_proxies.txt

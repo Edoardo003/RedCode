@@ -20,7 +20,7 @@ Execute Python scripts on the HexStrike server. **RESTRICTED** - this tool is ON
 # Run a public CVE exploit from Exploit-DB
 execute_python_script(script="/path/to/exploit-db-12345.py")
 
-# Run a PoC script written by @poc agent
+# Run an existing, reviewed exploit script
 execute_python_script(script="/path/to/verified-poc.py")
 
 # Run a published GitHub exploit

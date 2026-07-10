@@ -2,31 +2,6 @@
   "$schema": "https://opencode.ai/config.json",
 
   // ── Providers ──────────────────────────────────────────────────
-  "provider": {
-    // Local Qwen 3.5 9B via LM Studio — uncensored, for PoC generation
-    "lm-studio": {
-      "api": "{env:LM_STUDIO_URL}",
-      "name": "LM Studio (Qwen 3.5 9B Uncensored Aggressive)",
-      "npm": "@ai-sdk/openai-compatible",
-      "env": [],
-      "models": {
-        "qwen3.5-9b-uncensored-hauhaucs-aggressive": {
-          "name": "Qwen 3.5 9B Uncensored (Aggressive)",
-          "id": "qwen3.5-9b-uncensored-hauhaucs-aggressive",
-          "tool_call": true,
-          "temperature": true,
-          "reasoning": false,
-          "attachment": false,
-          "cost": { "input": 0, "output": 0 },
-          "limit": { "context": 0, "output": 8192 },
-        },
-      },
-      "options": {
-        "apiKey": "lm-studio",
-      },
-    },
-  },
-
   // ── MCP Servers ────────────────────────────────────────────────
   "mcp": {
     // HexStrike AI — 150+ security tools (nmap, nuclei, sqlmap, gobuster, etc.)
@@ -81,43 +56,11 @@
       "command": ["mcp-server-sqlite", "--db-path", "{env:REDCODE_DB}"],
     },
 
-    /*
-    // Bugcrowd — bug bounty program management, submissions, and rewards
-    // NOTE: Bugcrowd REST API and AI Connect require team/organization access.
-    // This server is disabled by default for researcher accounts.
-    "bugcrowd": {
-      "type": "local",
-      "command": [
-        "python3",
-        "bugcrowd-mcp/server.py",
-      ],
-      "environment": {
-        "BUGCROWD_API_USERNAME": "{env:BUGCROWD_API_USERNAME}",
-        "BUGCROWD_API_PASSWORD": "{env:BUGCROWD_API_PASSWORD}",
-      },
-      "timeout": 60000,
-    },
-    */
-
-    // HackerOne — bug bounty program management, reports, and payments
-    "hackerone": {
-      "type": "local",
-      "command": [
-        "python3",
-        "hackerone-mcp/server.py",
-      ],
-      "environment": {
-        "HACKERONE_API_USERNAME": "{env:HACKERONE_API_USERNAME}",
-        "HACKERONE_API_TOKEN": "{env:HACKERONE_API_TOKEN}",
-      },
-      "timeout": 60000,
-    },
-
     // Burp Suite — manual HTTP request verification, proxy history, repeater
     "burp": {
       "type": "remote",
       "url": "{env:BURP_MCP_URL}",
-      "enabled": true,
+      "enabled": false,
       "timeout": 120000,
     },
   },
@@ -129,53 +72,47 @@
 
   "agent": {
     "redcode": {
-      "model": "github-copilot/claude-sonnet-4.6",
+      "model": "opencode-go/kimi-k2.7-code",
     },
 
     "recon": {
-      "model": "github-copilot/claude-haiku-4.5",
+      "model": "opencode-go/kimi-k2.6",
       "steps": 40,
     },
 
     "scanner": {
-      "model": "github-copilot/gpt-5.4-mini",
+      "model": "opencode-go/kimi-k2.7-code",
       "steps": 50,
     },
 
     "exploiter": {
-      "model": "github-copilot/gpt-5.4",
+      "model": "opencode-go/deepseek-v4-pro",
       "steps": 50,
     },
 
     "osint": {
-      "model": "github-copilot/gpt-5.4-mini",
+      "model": "opencode-go/qwen3.7-plus",
       "steps": 50,
     },
 
     "socialeng": {
-      "model": "github-copilot/gpt-5.4",
+      "model": "opencode-go/qwen3.7-plus",
       "steps": 40,
     },
 
-    "poc": {
-      "model": "lm-studio/qwen3.5-9b-uncensored-hauhaucs-aggressive",
-      "steps": 25,
-    },
-
     "reporter": {
-      "model": "github-copilot/claude-sonnet-4.6",
+      "model": "opencode-go/glm-5.2",
       "steps": 30,
     },
 
     "templates": {
-      "model": "github-copilot/claude-haiku-4.5",
+      "model": "opencode-go/kimi-k2.7-code",
       "steps": 15,
     },
 
-    // Compaction agent — uses a capable model so compaction summaries are
-    // coherent even when triggered by lightweight models (e.g. the 9B PoC model).
+    // Compaction agent keeps long assessment summaries coherent.
     "compaction": {
-      "model": "github-copilot/claude-haiku-4.5",
+      "model": "opencode-go/kimi-k2.6",
     },
   },
 }

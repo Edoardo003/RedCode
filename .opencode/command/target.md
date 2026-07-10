@@ -34,4 +34,4 @@ Compile a structured attack surface summary with:
 - WAF/CDN identification
 - Potential entry points rated by severity (HIGH/MEDIUM/LOW)
 
-Save all results to `output/recon/`.
+Save all results to `output/{target}/recon/`.

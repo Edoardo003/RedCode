@@ -137,4 +137,4 @@ When XSS is confirmed:
 
 ## Evidence Capture
 
-Save raw output to `output/{target}/scans/raw/dalfox_*.txt` and `output/{target}/scans/raw/xsser_*.txt`. Working XSS payloads go directly to @exploiter for exploitation and @poc for PoC generation.
+Save raw output to `output/{target}/scans/raw/dalfox_*.txt` and `output/{target}/scans/raw/xsser_*.txt`. Working XSS payloads go directly to @exploiter for verification and evidence collection.

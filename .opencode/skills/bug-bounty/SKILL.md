@@ -59,18 +59,18 @@ Use @scanner agent or `/scan` command:
 3. Manual testing — focus on business logic, access control, auth
 4. Parameter fuzzing — hidden params, debug endpoints
 
-### Phase 4 — Exploitation & PoC
+### Phase 4 — Exploitation & Evidence
 
-Use @exploiter for analysis, @poc for code:
+Use @exploiter for verification and evidence collection:
 
 1. Validate findings — confirm exploitability
 2. Assess impact — what can an attacker actually do?
-3. Write minimal PoC — demonstrate the bug, don't destroy
+3. Preserve a minimal, non-destructive reproduction using the verified request or tool command
 4. Document reproduction steps clearly
 
 ### Phase 5 — Reporting & Submission
 
-Use @reporter or `/report hackerone|bugcrowd`:
+Use @reporter or `/report` with the appropriate report template:
 
 1. One vulnerability per report
 2. Clear title — specific, descriptive
@@ -112,7 +112,7 @@ Use @reporter or `/report hackerone|bugcrowd`:
 
 Use this for rapid program assessment when time is limited (e.g., new program launch, triage shift):
 
-1. **Fetch scope** — `hackerone.get_program(handle)` + `hackerone.get_program_scope(handle)`
+1. **Establish scope** — use the program policy and the assets explicitly provided by the user
 2. **Subdomain sweep** — `amass_enum` + `subfinder` on all wildcard domains (10-15 min)
 3. **Live host probe** — `httpx_scan` on discovered subdomains to filter dead hosts
 4. **Tech fingerprint** — `whatweb` + `httpx` headers to find interesting stacks
