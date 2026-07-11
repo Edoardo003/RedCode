@@ -46,6 +46,8 @@ Analyst
 
 Agent prompts live in [`.opencode/agent/`](.opencode/agent/), command prompts in [`.opencode/command/`](.opencode/command/), and model assignments in [`opencode.jsonc`](opencode.jsonc). The `redcode` agent is the default orchestrator.
 
+MCP access is also assigned per agent. The orchestrator receives persistence tools, while operational agents opt into only the MCP servers required by their roles. This reduces irrelevant tool definitions in model context; it is a context and capability boundary, not a substitute for engagement scope enforcement.
+
 ## Quick Start
 
 Install the requirements listed below, then run on a Linux host with Bash:
@@ -81,6 +83,19 @@ sudo ./install-tools.sh
 ```
 
 `install-tools.sh` uses `apt-get`, writes to system locations, and is intended for a disposable or dedicated Debian/Ubuntu-style security host. Review it before running it.
+
+## Interface and Context Control
+
+The project-local `redcode` theme is selected by [`tui.json`](tui.json). It follows the terminal's light or dark appearance and uses a matching high-contrast RedCode palette; no OpenCode binary modification is required.
+
+OpenCode's own usage report is available through the launcher:
+
+```bash
+./redcode stats          # sessions associated with this repository path
+./redcode stats --all    # all sessions in the current OpenCode data store
+```
+
+These reports expose token, cost, model, and tool usage rather than imposing a fixed budget. Automatic compaction and stale tool-output pruning are enabled in [`opencode.jsonc`](opencode.jsonc). Existing per-agent iteration limits are unchanged.
 
 ## Example Workflow
 
@@ -184,7 +199,7 @@ Custom Nuclei templates are generated under `templates/nuclei/custom/`, which is
 
 RedCode is a personal, experimental security workspace, not a production-ready platform.
 
-- **Implemented core:** OpenCode agent and command definitions, MCP configuration, local/LAN HexStrike setup, launcher environment handling, runtime doctor, schema migrations, engagement manifests, scope preflight, report templates, structured assessment handoff, and isolated CTF workspaces.
+- **Implemented core:** OpenCode agent and command definitions, role-specific MCP permissions, adaptive project theme, usage statistics, context pruning, local/LAN HexStrike setup, launcher environment handling, runtime doctor, schema migrations, engagement manifests, scope preflight, report templates, structured assessment handoff, and isolated CTF workspaces.
 - **Experimental:** full-chain orchestration, aggressive mode, checkpoint/resume behavior, social-engineering artifact generation, generated Nuclei templates, and CTF categories beyond the locally exercised web workflow.
 - **Optional:** the large security-tool installer, Burp MCP, proxy configuration, LAN-hosted HexStrike, and downloaded wordlists.
 - **Known limitation:** scope preflight is deterministic but does not physically intercept every HexStrike request; a policy gateway would be required for complete technical enforcement.

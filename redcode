@@ -27,6 +27,14 @@ case "${1:-}" in
   doctor|db|engagement|scope)
     exec python3 "$DIR/scripts/redcode_control.py" "$@"
     ;;
+  stats)
+    shift
+    if [ "${1:-}" = "--all" ]; then
+      shift
+      exec opencode stats "$@"
+    fi
+    exec opencode stats --project "$DIR" "$@"
+    ;;
 esac
 
 if [ -f "$REDCODE_ENGAGEMENT" ]; then

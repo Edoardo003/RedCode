@@ -60,49 +60,119 @@
   // Mode is set in each agent's frontmatter; primary agents are tab-switchable.
   "default_agent": "redcode",
 
+  // Keep recent working context while pruning stale tool output after compaction.
+  // Agent iteration limits remain role-specific and are intentionally unchanged.
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "reserved": 10000,
+  },
+
+  // MCP servers are opt-in per agent below. This reduces irrelevant tool schemas
+  // in each model context and prevents accidental cross-role tool use.
+  "permission": {
+    "hexstrike_*": "deny",
+    "filesystem_*": "deny",
+    "playwright_*": "deny",
+    "fetch_*": "deny",
+    "sqlite_*": "deny",
+    "burp_*": "deny",
+  },
+
   "agent": {
     "redcode": {
       "model": "opencode-go/kimi-k2.7-code",
+      "permission": {
+        "filesystem_*": "allow",
+        "sqlite_*": "allow",
+      },
     },
 
     "recon": {
       "model": "opencode-go/kimi-k2.6",
       "steps": 40,
+      "permission": {
+        "hexstrike_*": "allow",
+        "filesystem_*": "allow",
+        "fetch_*": "allow",
+        "sqlite_*": "allow",
+      },
     },
 
     "scanner": {
       "model": "opencode-go/kimi-k2.7-code",
       "steps": 50,
+      "permission": {
+        "hexstrike_*": "allow",
+        "filesystem_*": "allow",
+        "playwright_*": "allow",
+        "fetch_*": "allow",
+        "sqlite_*": "allow",
+      },
     },
 
     "exploiter": {
       "model": "opencode-go/deepseek-v4-pro",
       "steps": 50,
+      "permission": {
+        "hexstrike_*": "allow",
+        "filesystem_*": "allow",
+        "playwright_*": "allow",
+        "fetch_*": "allow",
+        "sqlite_*": "allow",
+      },
     },
 
     "osint": {
       "model": "opencode-go/qwen3.7-plus",
       "steps": 50,
+      "permission": {
+        "hexstrike_*": "allow",
+        "filesystem_*": "allow",
+        "playwright_*": "allow",
+        "fetch_*": "allow",
+        "sqlite_*": "allow",
+      },
     },
 
     "socialeng": {
       "model": "opencode-go/qwen3.7-plus",
       "steps": 40,
+      "permission": {
+        "filesystem_*": "allow",
+        "playwright_*": "allow",
+        "sqlite_*": "allow",
+      },
     },
 
     "ctf": {
       "model": "opencode-go/kimi-k2.7-code",
       "steps": 60,
+      "permission": {
+        "hexstrike_*": "allow",
+        "filesystem_*": "allow",
+        "playwright_*": "allow",
+        "fetch_*": "allow",
+        "sqlite_*": "allow",
+      },
     },
 
     "reporter": {
       "model": "opencode-go/glm-5.2",
       "steps": 30,
+      "permission": {
+        "filesystem_*": "allow",
+        "sqlite_*": "allow",
+      },
     },
 
     "templates": {
       "model": "opencode-go/kimi-k2.7-code",
       "steps": 15,
+      "permission": {
+        "filesystem_*": "allow",
+        "sqlite_*": "allow",
+      },
     },
 
     // Compaction agent keeps long assessment summaries coherent.
