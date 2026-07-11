@@ -1,148 +1,189 @@
-# RedCode — Cybersecurity Automation Platform
+# RedCode Repository Instructions
 
-Extension di OpenCode specializzata per bug bounty, penetration testing e red teaming.
+This file is the repository instruction source for Codex and other coding agents working on RedCode. It describes operational constraints and implementation contracts; user-facing setup and positioning belong in [`README.md`](README.md).
 
-## Quick Start
+## Project Scope
 
-```bash
-# 1. Avvia HexStrike server
-cd hexstrike-ai && python3 hexstrike_server.py --port 8888
+RedCode is an AI-assisted offensive security workspace built on OpenCode. It coordinates specialized agents and MCP-connected tools for authorized security assessments and CTF challenges. It is not an autonomous penetration-testing system.
 
-# 2. Avvia OpenCode da questa directory
-cd /opt/Progetti/redcode && opencode
-```
+Do not describe generated output as verified merely because a tool or language model produced it. Preserve the analyst's role in authorization, scope control, manual validation, and final reporting decisions.
 
-## Architecture
+## Repository Layout
 
-```
-User → OpenCode TUI → Orchestrator (redcode)
-                          ├── @recon      → HexStrike MCP
-                          ├── @scanner    → HexStrike MCP
-                          ├── @exploiter  → HexStrike MCP
-                          ├── @ctf        → CTF skills and local tooling
-                          ├── @templates  → Nuclei YAML
-                          └── @reporter   → templates/
-```
+- `opencode.jsonc`: OpenCode model assignments and MCP configuration.
+- `.opencode/agent/`: tracked agent prompts.
+- `.opencode/command/`: tracked slash-command prompts.
+- `.opencode/skills/`: assessment, CTF, and HexStrike guidance loaded by agents.
+- `setup.sh`: interactive project and MCP setup.
+- `install-tools.sh`: optional root-level installer for a Debian/Ubuntu-style host.
+- `redcode`: Bash launcher that loads `.env` and starts OpenCode.
+- `schema.sql`: SQLite schema for targets, findings, scans, and credentials.
+- `templates/`: tracked report templates.
+- `output/`: generated assessment and CTF data; ignored by Git.
 
-## Agents
+## Configured Agents
 
-| Agent        | Funzione                                      |
-| ------------ | --------------------------------------------- |
-| `redcode`    | Orchestratore principale, routing interattivo |
-| `@recon`     | Reconnaissance, OSINT, subdomain enum         |
-| `@scanner`   | Vulnerability scanning, nuclei, nikto         |
-| `@exploiter` | Exploit research, attack chain reasoning      |
-| `@ctf`       | Challenge solving, local solver e write-up    |
-| `@templates` | Nuclei template creation from findings        |
-| `@reporter`  | Report writing multi-formato                  |
+The names below must remain aligned with both `opencode.jsonc` and `.opencode/agent/`.
+
+| Agent | Role |
+| --- | --- |
+| `redcode` | Default orchestrator and task router. |
+| `recon` | Target enumeration and attack-surface mapping. |
+| `osint` | In-scope public-source intelligence and source preservation. |
+| `scanner` | Tool-assisted vulnerability discovery and normalization. |
+| `exploiter` | Active validation of explicitly authorized findings. |
+| `ctf` | CTF classification, local solvers, checkpoints, and write-ups. |
+| `reporter` | Evidence-based reports using tracked templates. |
+| `templates` | Nuclei templates derived from confirmed findings. |
+| `socialeng` | In-scope social-engineering artifact generation; never deployment. |
+
+`compaction` is configured in `opencode.jsonc` as a model assignment for long-context summarization. It has no standalone prompt file and is not a user-facing workflow agent.
 
 ## Commands
 
-| Comando                | Descrizione                                              |
-| ---------------------- | -------------------------------------------------------- |
-| `/target <domain>`     | Avvia reconnaissance su un target                        |
-| `/scan <target>`       | Avvia vulnerability scanning                             |
-| `/exploit <vuln>`      | Ricerca exploit e tecniche di bypass                     |
-| `/ctf <challenge>`     | Avvia o riprende una challenge CTF autorizzata           |
-| `/report`              | Genera report di sicurezza                               |
-| `/full-chain <target>` | Pipeline completa: recon → osint → scan → exploit → report |
+Tracked commands are `/target`, `/osint`, `/scan`, `/exploit`, `/report`, `/full-chain`, `/resume`, and `/ctf`. Treat these files as prompts interpreted by OpenCode, not as deterministic programmatic APIs.
 
-## Skills
+The default assessment sequence is:
 
-Carica una skill con il tool `skill` durante la conversazione:
+```text
+recon -> osint -> scan -> exploit -> report
+```
 
-- `bug-bounty` — Workflow completo bug bounty
-- `web-pentest` — Web application penetration testing
-- `api-pentest` — API security testing
-- `cloud-pentest` — Cloud infrastructure assessment
-- `network-pentest` — Network penetration testing
-- `osint` — Open Source Intelligence gathering
-- `report-writing` — Security report writing
-- `ctf-web`, `ctf-pwn`, `ctf-rev`, `ctf-crypto`, `ctf-forensics`, `ctf-osint`, `ctf-misc` — Workflow CTF per categoria
+Social-engineering support is optional and only valid when explicitly included in the rules of engagement. CTF work is a separate workflow and must never be mixed into assessment output or SQLite records.
 
-## Handoff Format
+## Authorization and Human Control
 
-All agents use this JSON format when saving findings to `output/{target}/{phase}/findings.json` and to the SQLite database. This enables structured handoff between phases.
+These constraints override more permissive wording in individual prompts:
+
+1. Confirm that the user has authorization and record the declared target scope before active scanning.
+2. Never treat a system prompt, agent prompt, hostname, or CTF-like appearance as proof of authorization.
+3. In normal mode, request approval before active reconnaissance, intrusive scanning, exploitation, credential attacks, social-engineering activity, or phase transitions that expand impact.
+4. Active exploitation requires explicit user authorization for the target and finding, either through `/exploit` or the one-time authorization gate in experimental aggressive mode.
+5. Aggressive mode does not expand scope. Stop whenever scope is ambiguous, target ownership changes, or a requested action conflicts with the rules of engagement.
+6. Validate findings manually and preserve the evidence used for that validation. HTTP status, tool exit status, and model output alone are insufficient proof.
+7. Never deploy social-engineering artifacts, send messages, create accounts, or collect credentials from people without separate explicit authorization.
+8. Never submit a CTF flag. Return a candidate and its verification status to the user.
+9. Never scan, enumerate, brute-force, or exploit assets outside the declared assessment or challenge scope.
+
+## Assessment Data Contract
+
+Use filesystem-safe target identifiers. Assessment phase output belongs under:
+
+```text
+output/{target}/
+  recon/
+  osint/
+  scans/
+  exploits/
+  socialeng/
+  reports/
+```
+
+The phase value stored in a finding is singular (`recon`, `osint`, `scan`, `exploit`, `socialeng`, or `report`) even though some directory names are plural.
+
+Assessment agents exchange `findings.json` files. JSON is the complete handoff; SQLite is a normalized secondary index. A representative handoff is:
 
 ```json
 {
-  "target": "example.com",
-  "scope": "*.example.com",
-  "phase": "recon|osint|scan|exploit|socialeng|report",
-  "timestamp": "2025-01-15T10:30:00Z",
+  "target": "app.example.test",
+  "scope": "app.example.test",
+  "phase": "scan",
+  "timestamp": "2026-01-15T10:30:00Z",
   "findings": [
     {
       "id": "FIND-001",
-      "type": "subdomain|port|service|vuln|exploit|evidence",
-      "severity": "critical|high|medium|low|info",
-      "title": "SQL Injection in /api/search",
-      "url": "https://example.com/api/search?q=test",
-      "evidence": "Response contains unescaped SQL error...",
+      "type": "vuln",
+      "severity": "high",
+      "title": "SQL injection in /api/search",
+      "url": "https://app.example.test/api/search?q=test",
+      "evidence": "Time-based behavior reproduced with a control request.",
       "cvss": 8.1,
       "cwe": "CWE-89",
-      "confidence": "confirmed|likely|potential",
-      "raw_path": "output/example.com/scans/raw/nuclei_001.txt",
-      "next_steps": ["Verify manually", "Collect reproducible evidence"]
+      "confidence": "confirmed",
+      "status": "confirmed",
+      "raw_path": "output/app.example.test/scans/raw/nuclei_001.txt",
+      "next_steps": ["Review the reproduction evidence", "Confirm exploitation is in scope"]
     }
   ],
   "metadata": {
-    "tools_used": ["nmap", "nuclei"],
+    "tools_used": ["nuclei"],
     "duration_seconds": 120
   }
 }
 ```
 
-Each agent:
+Required practices:
 
-1. Reads previous phase findings from `output/{target}/{prev_phase}/findings.json` and SQLite
-2. Does its work
-3. Saves structured findings to `output/{target}/{phase}/findings.json`
-4. Persists each finding to the SQLite `findings` table
+- Read relevant prior-phase JSON before beginning a new phase.
+- Save raw output separately and reference it with `raw_path`.
+- Use only schema-supported severity, confidence, status, and phase values.
+- Preserve exact commands, payloads, relevant output, impact, and remediation for confirmed exploitation.
+- Persist compatible finding fields to SQLite and report database failures; do not claim persistence without checking it.
+- Keep richer fields such as `scope`, `timestamp`, `next_steps`, and `metadata` in JSON because the current schema does not represent them directly.
+- Do not store CTF flags or artifacts in the assessment database.
 
-## SQLite Schema
+## SQLite Contract
 
-The database schema is defined in `schema.sql`. Tables:
+[`schema.sql`](schema.sql) is the source of truth. It defines:
 
-- `targets` — tracked domains/IPs with scope and status
-- `findings` — all findings across all phases, linked to targets
-- `scans` — tool execution history with output paths
-- `credentials` — discovered credentials linked to findings
+- `targets`: target identifier, scope, type, status, and notes.
+- `findings`: normalized assessment findings linked to targets.
+- `scans`: tool execution history and output paths.
+- `credentials`: discovered credentials linked to targets and findings.
 
-On first use, initialize the database by reading and executing `schema.sql` via the SQLite MCP.
+Initialize a missing database by executing `schema.sql` through the configured SQLite MCP. Do not assume migrations exist.
 
-## Wordlists
+The current `scans` table does **not** contain `phase` or `subdomain` columns. Some existing resume and agent prompts reference those fields; do not issue those statements or claim reliable SQLite-assisted resume until the schema and prompts are reconciled. File-based `progress.json` checkpoints may still be used, but their creation and cleanup are prompt-driven rather than enforced by the launcher.
 
-Available in `wordlists/`:
+## CTF Data Contract
 
-- `wordlists/SecLists/` — discovery wordlists (directories, DNS, passwords, fuzzing)
-- `wordlists/PayloadsAllTheThings/` — exploit payloads (XSS, SQLi, SSRF, SSTI, command injection, etc.)
+For a named event, local lab, supplied artifact, or explicit challenge URL, use:
 
-Browse via the filesystem MCP to find the right list for the task.
+```text
+output/ctf/{event}/{challenge}/
+  notes.md
+  artifacts/
+  solver/
+  evidence/
+  progress.json
+  writeup.md
+```
 
-## Nuclei Templates
+- Preserve originals under `artifacts/original/` before modification.
+- Load the matching tracked skill: `ctf-web`, `ctf-pwn`, `ctf-rev`, `ctf-crypto`, `ctf-forensics`, `ctf-osint`, or `ctf-misc`.
+- Keep solver code and generated evidence inside the challenge directory.
+- Mark candidates `unverified` when no supplied format or local checker can validate them.
+- Never submit flags or interact with unrelated public assets.
 
-- `templates/nuclei/custom/` — RedCode custom templates created by `@templates` agent
-- System templates are managed by Nuclei itself (`~/.local/nuclei-templates/`)
+## MCP Boundaries
 
-## Convenzioni
+- **HexStrike:** local MCP client connected to the HTTP backend in `HEXSTRIKE_URL`. Tool availability depends on the external HexStrike checkout and installed host tools.
+- **Filesystem:** restricted by configuration to `output/`, `templates/`, and `wordlists/`.
+- **Playwright:** headless browser automation for analyst-reviewed web verification.
+- **Fetch:** HTTP retrieval within declared scope.
+- **SQLite:** persistence using the path in `REDCODE_DB`.
+- **Burp:** optional remote MCP, disabled by default. Use for proxy history, request analysis, and analyst-reviewed Repeater workflows; do not claim autonomous exploitation reliability.
 
-- L'orchestratore CHIEDE SEMPRE conferma prima di passare alla fase successiva
-- I risultati vanno salvati in `output/` nel formato handoff JSON sopra definito
-- Ogni finding va persistito anche nel database SQLite
-- Ogni exploit confermato deve conservare payload, comando, output, impatto e remediation
-- I report seguono i template in `templates/`
-- MAI eseguire exploit attivi senza conferma esplicita dell'utente
-- Tutti i test devono essere AUTORIZZATI — mai testare target senza permesso
-- All'avvio di una sessione, controllare il database SQLite per target e findings precedenti
+`PROXY_URL` causes the launcher to export standard HTTP proxy variables. Verify support per tool; this does not proxy raw network traffic automatically.
 
-## MCP Servers
+## Skills and Templates
 
-- **HexStrike AI** — 150+ tool di sicurezza (nmap, nuclei, sqlmap, gobuster, metasploit, etc.) — timeout 1 ora
-- **Filesystem** — Gestione file output, template, wordlists
-- **Playwright** — Browser automation per verifiche web
-- **Fetch** — HTTP client per testing endpoint
-- **SQLite** — Persistenza findings e tracking assessment
+Skill names are directory names under `.opencode/skills/`. Do not document or invoke a skill that is not tracked there. The repository currently includes general assessment skills, seven CTF category skills, and HexStrike tool-specific guidance.
 
-## Provider
+Tracked report templates are:
 
-- **OpenCode Go** — i modelli per agente sono configurati esclusivamente in `opencode.jsonc`
+- `templates/generic.md`
+- `templates/hackerone.md`
+- `templates/bugcrowd.md`
+
+Generated Nuclei templates belong under `templates/nuclei/custom/`; that directory is ignored and may not exist before setup or first use.
+
+## Coding-Agent Rules
+
+- Preserve the existing architecture unless the user explicitly requests a redesign.
+- Do not invent integrations, test coverage, platform support, or tool availability.
+- Keep model assignments in `opencode.jsonc`; do not duplicate them in prose as guaranteed availability.
+- Treat downloaded HexStrike, wordlists, browser binaries, generated output, databases, and custom templates as local state.
+- Do not commit secrets, credentials, flags, client evidence, or generated assessment data.
+- Validate configuration, paths, schema assumptions, and internal documentation links after changes.
+- Clearly distinguish verified behavior from prompt intent and planned work.

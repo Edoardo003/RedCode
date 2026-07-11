@@ -1,152 +1,196 @@
 # RedCode
 
-RedCode is an Ubuntu-based OpenCode workspace for authorized security assessments and CTF challenges. It keeps an assessment workflow and a CTF workflow separate, while `redcode` remains the main orchestrator for both.
+RedCode is an AI-assisted offensive security workspace built on [OpenCode](https://opencode.ai/) for authorized assessments and CTF workflows.
 
-## What It Includes
+It coordinates specialized agents, connects security tools through MCP, and keeps findings and evidence organized between phases. RedCode assists an analyst; it is not an autonomous penetration-testing system, and its output requires manual review.
 
-- Assessment orchestration: recon, OSINT, scanning, exploitation, reporting, and resumable checkpoints.
-- HexStrike backend managed locally or consumed from a trusted LAN host.
-- Local MCP bridges for HexStrike, filesystem access, Playwright, Fetch, and SQLite.
-- CTF specialist for web, pwn, reverse engineering, crypto, forensics, OSINT, and misc challenges.
-- OpenCode Go models configured per agent in `opencode.jsonc`.
+> Use RedCode only on systems and challenges you are explicitly authorized to test.
 
-## Platform
+## Key Capabilities
 
-RedCode runs on Ubuntu. Windows is suitable for editing the repository, commits, and GitHub operations; run setup, MCPs, HexStrike, and security tooling on the Ubuntu VM or server.
+- Routes assessment work across reconnaissance, OSINT, scanning, exploitation, reporting, social-engineering support, and Nuclei template agents.
+- Connects OpenCode to HexStrike, a constrained project filesystem, Playwright, Fetch, and SQLite through MCP.
+- Preserves assessment findings in per-target JSON files and provides a SQLite schema for cross-session tracking.
+- Separates assessment data from CTF artifacts, solver code, checkpoints, and write-ups.
+- Supports a local HexStrike backend or a backend hosted on a trusted local network.
+- Provides report templates for generic assessments, HackerOne, and Bugcrowd formats.
 
-## Requirements
+## Why RedCode?
 
-- OpenCode installed for the account that runs RedCode.
-- Ubuntu with Python 3.10+, pip, Git, curl, and Node.js 22+ LTS.
-- Root access only when installing the optional `systemd` service for a local HexStrike backend.
+Offensive security work often involves moving the same context between discovery tools, notes, verification steps, and reports. RedCode gives OpenCode a security-focused workspace in which agents share a target-specific evidence structure instead of starting each phase from an empty conversation. The goal is to reduce repetitive coordination and evidence handling while leaving scope decisions, intrusive actions, validation, and reporting judgment with the analyst.
+
+## Human-in-the-Loop Design
+
+- The analyst declares the target and confirms that the requested activity is authorized and in scope.
+- The default assessment workflow asks before active reconnaissance, intrusive tests, exploitation, and phase transitions where appropriate.
+- `/exploit` is an active command and must be used only after explicit authorization for the selected finding and target.
+- `/full-chain --aggressive` is an experimental opt-in mode. It asks for one explicit authorization before automatically advancing; it should not be used when the rules of engagement require approval per action.
+- Tool output is evidence, not proof by itself. Findings and credentials require analyst validation before they are treated as confirmed or included in a deliverable.
+- CTF agents may verify candidate flags against a supplied format or local checker, but they do not submit flags or operate outside the declared challenge scope.
+
+## Architecture
+
+```text
+Analyst
+  -> OpenCode
+       -> redcode (main orchestrator)
+            -> assessment: recon -> osint -> scanner -> exploiter -> reporter
+            -> CTF: ctf -> category skill -> solver and write-up
+            -> support: socialeng, templates
+       -> MCP connections
+            -> HexStrike HTTP backend
+            -> filesystem, Playwright, Fetch, SQLite
+            -> Burp MCP (optional, disabled by default)
+```
+
+Agent prompts live in [`.opencode/agent/`](.opencode/agent/), command prompts in [`.opencode/command/`](.opencode/command/), and model assignments in [`opencode.jsonc`](opencode.jsonc). The `redcode` agent is the default orchestrator.
 
 ## Quick Start
 
-On the Ubuntu host:
+Install the requirements listed below, then run on a Linux host with Bash:
 
 ```bash
 git clone https://github.com/Edoardo003/RedCode.git
 cd RedCode
 chmod +x setup.sh redcode install-tools.sh
 ./setup.sh
+./redcode mcp list
 ./redcode
 ```
 
-`setup.sh` asks where the HexStrike HTTP backend runs:
+`setup.sh` is interactive. It creates `.env`, clones HexStrike and the configured wordlist repositories, installs MCP dependencies, installs Playwright Chromium, and asks whether HexStrike runs locally or on a trusted LAN host. In local mode it can install a `systemd` service when run as root.
 
-- `local`: installs dependencies and can enable `redcode-hexstrike.service`.
-- `lan`: keeps the MCP bridge local to OpenCode while connecting it to a trusted LAN backend URL.
-
-Check runtime status with:
+The large optional tool installer is separate:
 
 ```bash
-./redcode mcp list
-systemctl status redcode-hexstrike.service
+sudo ./install-tools.sh
 ```
 
-Run `./install-tools.sh` separately on the host that runs HexStrike when the full optional security and CTF toolset is needed.
+`install-tools.sh` uses `apt-get`, writes to system locations, and is intended for a disposable or dedicated Debian/Ubuntu-style security host. Review it before running it.
 
-## Configuration
+## Example Workflow
 
-Copy `.env.example` to `.env` if setup has not already created it:
-
-```bash
-HEXSTRIKE_MODE=local
-HEXSTRIKE_URL=http://127.0.0.1:8888
-REDCODE_DB=./redcode.db
-BURP_MCP_URL=
-PROXY_URL=
-```
-
-Burp is disabled by default. Enable it in `opencode.jsonc` only after configuring its trusted remote URL.
-
-## Architecture
+The commands below are entered inside OpenCode:
 
 ```text
-User
-  -> redcode (main orchestrator)
-       -> assessment agents: recon, osint, scanner, exploiter, reporter
-       -> ctf agent: challenge classification, solver workflow, write-up
-       -> support agents: socialeng, templates
-       -> local MCP bridges
-            -> HexStrike HTTP backend
-            -> filesystem, Playwright, Fetch, SQLite
+/target app.example.test
 ```
 
-Agent models are intentionally configured only in `opencode.jsonc`, which is the source of truth for the OpenCode Go plan.
+1. Confirm the authorized scope, then review passive reconnaissance before approving active enumeration.
+2. Inspect `output/app.example.test/recon/findings.json` and remove any out-of-scope assets.
+3. Continue with `/osint app.example.test` or `/scan app.example.test` after analyst review.
+4. Validate scanner results manually. Use `/exploit <selected finding>` only when active exploitation is explicitly permitted.
+5. Preserve raw output and reproduction evidence under the relevant target phase.
+6. Generate a report with `/report generic` and review it under `output/app.example.test/reports/`.
+
+The commands are OpenCode prompts, not a deterministic pipeline API. The analyst should review each handoff and verify that generated files and database records are complete.
 
 ## Assessment Commands
 
-| Command | Purpose |
-| --- | --- |
-| `/target <domain>` | Start reconnaissance on a declared target. |
-| `/osint <target>` | Gather authorized intelligence. |
-| `/scan <target>` | Run vulnerability scanning from prior findings. |
-| `/exploit <finding>` | Investigate selected, authorized findings. |
-| `/report [format]` | Generate a security report from collected evidence. |
-| `/full-chain <target>` | Run the five-phase assessment pipeline. |
-| `/resume <target>` | Resume a checkpointed assessment phase. |
-
-Assessment results live under:
-
-```text
-output/{target}/
-  recon/
-  osint/
-  scans/
-  exploits/
-  reports/
-```
+| Command | Purpose | Status |
+| --- | --- | --- |
+| `/target <target>` | Start passive reconnaissance and request approval before active reconnaissance. | Core |
+| `/osint <target>` | Gather in-scope public intelligence and preserve sources. | Core |
+| `/scan <target>` | Run tool-assisted vulnerability discovery from available context. | Core |
+| `/exploit <finding>` | Actively investigate an explicitly authorized finding. | Core, high impact |
+| `/report [generic\|hackerone\|bugcrowd]` | Build a report from collected evidence and templates. | Core |
+| `/full-chain <target>` | Orchestrate the five assessment phases with confirmations. | Experimental |
+| `/full-chain <target> --aggressive` | Use one authorization gate, then auto-advance within scope. | Experimental |
+| `/resume <target>` | Resume from prompt-managed checkpoints. | Experimental; see limitations |
 
 ## CTF Workflow
 
-Use `/ctf` only for a named competition, local lab, supplied artifact, or explicitly provided challenge URL.
+Use `/ctf` only for a named competition, local lab, supplied artifact, or explicitly provided challenge service:
 
 ```text
-/ctf web juiceshop local-lab http://127.0.0.1:3000
-/ctf rev crackme local-lab ./artifacts/crackme
-/ctf crypto rsa-warmup spring-ctf ./artifacts/challenge.txt
+/ctf category=web event=local-lab challenge=juiceshop url=http://127.0.0.1:3000
+/ctf category=rev event=spring-ctf challenge=crackme artifact=./artifacts/crackme
+/ctf category=crypto event=spring-ctf challenge=rsa-warmup artifact=./artifacts/challenge.txt flag_format=FLAG{...}
 ```
 
-`@ctf` chooses the matching category skill:
+`/ctf` currently accepts free-form arguments rather than enforcing a positional grammar, so labeled fields are the least ambiguous form. The CTF agent routes to one of the tracked `ctf-web`, `ctf-pwn`, `ctf-rev`, `ctf-crypto`, `ctf-forensics`, `ctf-osint`, or `ctf-misc` skills.
 
-- `ctf-web`
-- `ctf-pwn`
-- `ctf-rev`
-- `ctf-crypto`
-- `ctf-forensics`
-- `ctf-osint`
-- `ctf-misc`
+CTF work is kept under `output/ctf/` and is not written to the assessment database. A local Juice Shop run has been used during development to exercise the web workflow, but the repository does not yet contain automated CTF fixtures or test results for every category.
 
-CTF work is isolated from assessment data and may use local solvers and debuggers:
+## Structured Findings and Evidence
+
+Assessment agents are instructed to exchange `findings.json` files and persist compatible records to SQLite. The handoff includes target, scope, phase, confidence, evidence paths, and next steps; the complete contract is documented in [`AGENTS.md`](AGENTS.md), and the database tables are defined in [`schema.sql`](schema.sql).
+
+JSON remains the richer evidence handoff. SQLite stores normalized target, finding, scan, and credential records, but does not contain every JSON field. Persistence is agent-driven and must be checked by the analyst; it is not transactionally enforced by the launcher.
+
+## Optional Integrations
+
+### HexStrike Deployment
+
+The HexStrike MCP client is local to OpenCode. Its HTTP backend may run on the same machine or at `HEXSTRIKE_URL` on a trusted LAN. The repository clones HexStrike during setup rather than vendoring or pinning it.
+
+### Burp MCP
+
+The `burp` remote MCP entry in [`opencode.jsonc`](opencode.jsonc) is disabled by default. When an analyst supplies a trusted `BURP_MCP_URL` and enables the entry, it is intended for proxy-history or request analysis and analyst-reviewed Repeater workflows. RedCode does not claim reliable autonomous exploitation through Burp.
+
+### Proxy Environment
+
+When `PROXY_URL` is set, the [`redcode`](redcode) launcher exports standard HTTP proxy environment variables. Support still depends on each underlying tool; raw-socket tools such as Nmap do not become proxied automatically.
+
+## Output Structure
+
+Generated output is excluded from Git by default.
 
 ```text
-output/ctf/{event}/{challenge}/
-  artifacts/
-  solver/
-  evidence/
-  progress.json
-  writeup.md
+output/
+  {target}/
+    recon/findings.json
+    osint/findings.json
+    scans/findings.json
+    exploits/findings.json
+    socialeng/
+    reports/
+  ctf/{event}/{challenge}/
+    artifacts/
+    solver/
+    evidence/
+    progress.json
+    writeup.md
 ```
 
-Flags, attachments, solver output, and event-specific data stay inside ignored output directories. RedCode verifies flag candidates but never submits them automatically.
+Custom Nuclei templates are generated under `templates/nuclei/custom/`, which is also ignored. Reusable report templates are tracked in [`templates/`](templates/).
 
-## Local Juice Shop Test
+## Project Status and Limitations
 
-Juice Shop is an optional local test for the `ctf-web` workflow. With Docker installed on the Ubuntu host, bind it only to loopback:
+RedCode is a personal, experimental security workspace, not a production-ready platform.
 
-```bash
-docker run --rm --name redcode-juiceshop -p 127.0.0.1:3000:3000 bkimminich/juice-shop
-```
+- **Implemented core:** OpenCode agent and command definitions, MCP configuration, local/LAN HexStrike setup, launcher environment handling, report templates, structured assessment handoff, and isolated CTF workspaces.
+- **Experimental:** full-chain orchestration, aggressive mode, checkpoint/resume behavior, social-engineering artifact generation, generated Nuclei templates, and CTF categories beyond the locally exercised web workflow.
+- **Optional:** the large security-tool installer, Burp MCP, proxy configuration, LAN-hosted HexStrike, and downloaded wordlists.
+- **Known limitation:** resume-related prompts reference `phase` and `subdomain` fields that are not currently present in the `scans` table. SQLite-assisted resume should not be treated as reliable until the schema and prompts are aligned.
+- There is no automated test suite, CI workflow, release process, supported-platform matrix, or pinned HexStrike revision.
+- MCP packages invoked through `npx ...@latest` and OpenCode Go model availability may change independently of this repository.
+- No license file is currently included.
 
-Then use:
+See [`DOCS_REVIEW.md`](DOCS_REVIEW.md) for the documentation audit and prioritized follow-up work.
 
-```text
-/ctf web juiceshop local-lab http://127.0.0.1:3000
-```
+> **TODO:** Add a terminal recording of setup and a redacted end-to-end local-lab demonstration. No screenshot or demo asset is currently tracked.
 
-This tests CTF routing, local web scope, evidence storage, checkpoints, and write-up generation. It does not replace category fixtures for pwn, reverse, crypto, or forensics.
+## Requirements
+
+- OpenCode installed and authenticated for the account running RedCode.
+- Linux with Bash, Git, `curl`, Python 3 with `pip3`, and Node.js 22 or newer with `npx`.
+- Network access during setup to clone repositories and install Python, Node, browser, and wordlist dependencies.
+- Root access for the optional `systemd` service and `install-tools.sh`. Python package installation may also require an appropriate virtual environment or package-manager policy on the host.
+- An OpenCode provider plan that can access the model identifiers configured in [`opencode.jsonc`](opencode.jsonc).
+
+`setup.sh` checks command availability and enforces Node.js 22+, but it does not currently enforce a Python version or detect a supported Linux distribution.
 
 ## Legal Use
 
-Use RedCode only against authorized assessment targets, local labs, or explicitly scoped CTF challenges. Keep challenge and assessment scope separate, and never direct CTF tooling at unrelated public systems.
+Use RedCode only under explicit authorization and documented scope. Respect rules of engagement, rate limits, privacy obligations, and service availability. Never use assessment or CTF workflows against unrelated systems, and never treat generated findings as validated client results without manual review.
+
+## Documentation
+
+- [`AGENTS.md`](AGENTS.md): repository instructions, safety boundaries, agents, and the assessment handoff contract.
+- [`DOCS_REVIEW.md`](DOCS_REVIEW.md): audit findings, unresolved gaps, and recommended next steps.
+- [`opencode.jsonc`](opencode.jsonc): MCP and model configuration.
+- [`.opencode/agent/`](.opencode/agent/): specialized agent prompts.
+- [`.opencode/skills/`](.opencode/skills/): assessment, CTF, and HexStrike tool guidance.
+- [`schema.sql`](schema.sql): SQLite schema.
+- [`templates/`](templates/): report templates.

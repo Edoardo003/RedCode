@@ -1,10 +1,9 @@
 {
   "$schema": "https://opencode.ai/config.json",
 
-  // ── Providers ──────────────────────────────────────────────────
-  // ── MCP Servers ────────────────────────────────────────────────
+  // MCP servers
   "mcp": {
-    // HexStrike AI — 150+ security tools (nmap, nuclei, sqlmap, gobuster, etc.)
+    // HexStrike MCP client connected to the configured HTTP backend.
     "hexstrike": {
       "type": "local",
       "command": [
@@ -16,7 +15,7 @@
       "timeout": 86400000,
     },
 
-    // Filesystem — read/write output directory for reports and results
+    // Filesystem access is limited to generated output, templates, and wordlists.
     "filesystem": {
       "type": "local",
       "command": [
@@ -29,25 +28,25 @@
       ],
     },
 
-    // Playwright — browser automation for verifying web vulns, screenshots, auth flows
+    // Headless browser automation for analyst-reviewed web verification.
     "playwright": {
       "type": "local",
       "command": ["npx", "-y", "@playwright/mcp@latest", "--headless"],
     },
 
-    // Fetch — HTTP client for testing API endpoints, custom requests
+    // HTTP retrieval for in-scope resources.
     "fetch": {
       "type": "local",
       "command": ["mcp-server-fetch"],
     },
 
-    // SQLite — persist findings, scan history, target tracking across sessions
+    // SQLite persistence for findings, scan history, and target tracking.
     "sqlite": {
       "type": "local",
       "command": ["mcp-server-sqlite", "--db-path", "{env:REDCODE_DB}"],
     },
 
-    // Burp Suite — manual HTTP request verification, proxy history, repeater
+    // Optional Burp MCP for proxy history, request analysis, and reviewed Repeater work.
     "burp": {
       "type": "remote",
       "url": "{env:BURP_MCP_URL}",
@@ -56,9 +55,9 @@
     },
   },
 
-  // ── Agent Configuration ────────────────────────────────────────
-  // Full agent prompts live in .opencode/agent/*.md
-  // mode is set in each agent's frontmatter — primary = tab-switchable
+  // Agent configuration
+  // Full agent prompts live in .opencode/agent/*.md.
+  // Mode is set in each agent's frontmatter; primary agents are tab-switchable.
   "default_agent": "redcode",
 
   "agent": {
