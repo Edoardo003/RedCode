@@ -1,0 +1,29 @@
+{
+  "elapsed_ms": 19,
+  "method": "GET",
+  "request_body": null,
+  "request_headers": {
+    "Accept": "application/json",
+    "Authorization": "<redacted>"
+  },
+  "response_body": {
+    "data": {
+      "createdAt": "2026-07-11T10:37:58.176Z",
+      "deletedAt": null,
+      "deluxeToken": "<redacted>",
+      "email": "<redacted-email>",
+      "id": 25,
+      "isActive": true,
+      "lastLoginIp": "0.0.0.0",
+      "profileImage": "/assets/public/images/uploads/defaultAdmin.png",
+      "role": "admin",
+      "updatedAt": "2026-07-11T10:37:58.176Z",
+      "username": ""
+    },
+    "status": "success"
+  },
+  "response_content_type": "application/json; charset=utf-8",
+  "status": 200,
+  "timestamp": "2026-07-11T10:37:58.232405+00:00",
+  "url": "http://127.0.0.1:3000/api/Users/25"
+}

@@ -1,0 +1,33 @@
+{
+  "elapsed_ms": 32,
+  "method": "POST",
+  "request_body": {
+    "email": "<redacted-email>",
+    "password": "<redacted>",
+    "passwordRepeat": "<redacted>"
+  },
+  "request_headers": {
+    "Accept": "application/json",
+    "Content-Type": "application/json"
+  },
+  "response_body": {
+    "data": {
+      "createdAt": "2026-07-11T10:37:58.106Z",
+      "deletedAt": null,
+      "deluxeToken": "<redacted>",
+      "email": "<redacted-email>",
+      "id": 24,
+      "isActive": true,
+      "lastLoginIp": "0.0.0.0",
+      "profileImage": "/assets/public/images/uploads/default.svg",
+      "role": "customer",
+      "updatedAt": "2026-07-11T10:37:58.106Z",
+      "username": ""
+    },
+    "status": "success"
+  },
+  "response_content_type": "application/json; charset=utf-8",
+  "status": 201,
+  "timestamp": "2026-07-11T10:37:58.124527+00:00",
+  "url": "http://127.0.0.1:3000/api/Users/"
+}

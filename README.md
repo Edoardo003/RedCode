@@ -143,12 +143,12 @@ Implemented and tested in the repository:
 - schema initialization and version 1 to version 2 migration with backup;
 - runtime and MCP diagnostics;
 - agent/configuration/link contract checks;
-- shell syntax checks through CI.
+- shell syntax checks through CI;
+- a loopback-only Juice Shop integration test and a sanitized evidence fixture derived from two clean-container runs.
 
 Current limitations:
 
 - Agent workflows and evidence persistence are prompt-driven, not transactional.
-- There is no persisted end-to-end assessment or CTF fixture yet.
 - HexStrike is cloned without a pinned compatibility version; Node MCP entry points are pinned in the repository.
 - Burp MCP is disabled until a specific implementation is selected and tested.
 - Tool profiles are limited to packages available from the host's configured APT repositories; additional HexStrike capabilities require separate, reviewed installation.
@@ -169,6 +169,8 @@ Use RedCode only with explicit authorization and documented scope. Respect rules
 
 - [`docs/design.md`](docs/design.md): architectural decisions and trade-offs.
 - [`docs/control-plane.md`](docs/control-plane.md): manifests, migrations, doctor, and scope matching.
+- [`docs/juice-shop-e2e.md`](docs/juice-shop-e2e.md): local reproduction and the sanitized CTF fixture.
+- [`examples/juice-shop-e2e/`](examples/juice-shop-e2e/): redacted evidence from the validated run.
 - [`AGENTS.md`](AGENTS.md): repository contracts for coding agents.
 - [`opencode.jsonc`](opencode.jsonc): models, MCP servers, compaction, and permissions.
 - [`schema.sql`](schema.sql): current SQLite schema.
