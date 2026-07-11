@@ -28,7 +28,7 @@ The test is skipped unless `REDCODE_JUICE_SHOP_URL` is explicitly set:
 
 ```bash
 REDCODE_JUICE_SHOP_URL=http://127.0.0.1:3000 \
-  python3 -m unittest tests.test_juice_shop_integration -v
+  python3 -m unittest discover -s tests -p 'test_juice_shop_integration.py' -v
 ```
 
 To run the full suite including the conditional test:
