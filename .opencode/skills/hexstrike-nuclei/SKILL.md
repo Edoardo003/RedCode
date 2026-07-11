@@ -21,7 +21,7 @@ Template-based vulnerability scanner. Detects CVEs, misconfigurations, exposures
 
 These flags in `additional_args` cause "flag provided but not defined" errors. The MCP wrapper builds the CLI command itself — extra flags get appended raw and break it.
 
-**NEVER put ANY of these in `additional_args`:**
+The wrapper rejects these values in `additional_args`:
 
 `-k`, `-no-verify`, `-no-color`, `-duc`, `-rl`, `-timeout`, `-retries`, `-sk`, `-stats`, `-si`, `-silent`, `-nc`, `-disable-update-check`, `-json`, `-jsonl`, `-o`, `-output`, `-rate-limit`, `-bulk-size`, `-concurrency`, `-headless`, `-system-resolvers`, `-r`, `-interactsh-url`, `-iserver`, `-ni`, `-no-interactsh`
 
@@ -69,7 +69,7 @@ nuclei_scan(target="https://example.com", additional_args="-ni -no-interactsh")
 # Error: wrapper manages interactsh configuration
 ```
 
-## MCP Throttling (CRITICAL)
+## MCP Throttling
 
 **Max 2 nuclei scans in parallel.** The HexStrike MCP server crashes with "Connection closed" (MCP error -32000) when overloaded with 3+ simultaneous nuclei processes.
 

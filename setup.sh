@@ -4,6 +4,10 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_DIR"
 
+if [ -d "$HOME/.opencode/bin" ]; then
+  export PATH="$HOME/.opencode/bin:$PATH"
+fi
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -193,9 +197,9 @@ pip3 install mcp-server-fetch mcp-server-sqlite
 ok "Python MCP servers installed"
 
 info "Preparing local Node MCP servers..."
-npx -y @modelcontextprotocol/server-filesystem --help &>/dev/null || true
-npx -y @playwright/mcp@latest --help &>/dev/null || true
-npx -y playwright install chromium
+npx -y @modelcontextprotocol/server-filesystem@2026.7.10 --help &>/dev/null || true
+npx -y @playwright/mcp@0.0.78 --help &>/dev/null || true
+npx -y playwright@1.61.1 install chromium
 ok "Node MCP servers and Chromium ready"
 
 echo ""

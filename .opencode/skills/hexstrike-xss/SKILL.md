@@ -5,7 +5,7 @@ description: "Correct parameters, scanning modes, proxy configuration, and explo
 
 # HexStrike XSS Tools - dalfox and xsser_scan - Tool Skill
 
-Cross-Site Scripting (XSS) detection and exploitation tools. dalfox is the primary XSS scanner (faster, more accurate); xsser_scan is the automated alternative. Use both for comprehensive XSS coverage.
+Cross-Site Scripting (XSS) detection tools. Dalfox and `xsser_scan` provide different automated checks; select them from the target context and verify browser execution independently.
 
 ---
 

@@ -144,4 +144,4 @@ When a shell is obtained:
 
 ## Evidence Capture
 
-Save Metasploit output to `output/{target}/exploits/raw/metasploit_*.txt`. Shell access is CRITICAL severity, confirmed confidence. Persist all extracted data.
+Save Metasploit output to `output/{target}/exploits/raw/metasploit_*.txt`. Shell access is strong evidence, but severity depends on privileges and demonstrated impact. Persist the minimum evidence required for review.

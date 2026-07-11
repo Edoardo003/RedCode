@@ -86,11 +86,11 @@ Pacu needs AWS credentials to operate. These come from:
 ## Output Interpretation
 
 - **IAM users/roles enumerated** - map the permission landscape. Look for overprivileged roles.
-- **Privilege escalation path found** - CRITICAL. Follow the path to gain higher access.
+- **Privilege escalation path found** - record the path and request approval before changing privileges.
 - **S3 bucket accessible** - check for sensitive data (backups, logs, credentials, PII).
 - **Public snapshots found** - can be copied and mounted to extract data.
-- **Secrets enumerated** - database passwords, API keys, encryption keys. CRITICAL.
+- **Secrets enumerated** - sensitive evidence; minimize display and validate scope before use.
 
 ## Evidence Capture
 
-Save Pacu output to `output/{target}/exploits/raw/pacu_*.txt`. AWS findings are typically HIGH/CRITICAL severity. Persist discovered credentials and access keys to SQLite immediately.
+Save Pacu output to `output/{target}/exploits/raw/pacu_*.txt`. Assign severity from the affected resources, permissions, and demonstrated impact. Store only the credential metadata needed by the approved workflow.

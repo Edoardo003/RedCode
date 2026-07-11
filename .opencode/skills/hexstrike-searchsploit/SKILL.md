@@ -97,7 +97,7 @@ searchsploit(query="Apache 2.4.29")
 # Step 5: If manual exploit -> hand to @exploiter with exploit details
 ```
 
-## CVE Cross-Reference (CRITICAL)
+## CVE Cross-Reference
 
 When searchsploit returns CVE-based results:
 

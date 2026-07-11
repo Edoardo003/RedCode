@@ -1,37 +1,17 @@
 ---
-description: "Start reconnaissance on a target"
+description: "Map the authorized attack surface"
 agent: recon
 ---
 
-Perform full reconnaissance on the following target:
+Map the attack surface for:
 
 $ARGUMENTS
 
-## Instructions
+1. Read and validate the active engagement manifest.
+2. Normalize the declared domains, hosts, IPs, CIDRs, URLs, and exclusions.
+3. Begin with relevant passive DNS, certificate, archive, and public-source discovery.
+4. Present passive results and request approval before active enumeration unless already approved.
+5. Resolve and deduplicate assets, identify wildcard DNS and scope drift, and prioritize reachable services.
+6. Save `output/{target}/recon/findings.json`, raw evidence, and compatible SQLite records.
 
-### Phase 1 — Passive Recon (start immediately)
-
-1. DNS records (A, AAAA, MX, TXT, CNAME, NS, SOA)
-2. WHOIS lookup — registrar, dates, registrant info
-3. Certificate transparency — discover subdomains via crt.sh
-4. Web archive — check Wayback Machine for historical pages and removed endpoints
-5. Technology fingerprinting — detect CMS, frameworks, server software, WAF
-
-### Phase 2 — Active Recon (ask my confirmation first)
-
-1. Port scanning with `nmap_scan` — service detection, OS detection
-2. Subdomain enumeration with `amass_enum`
-3. Web technology detection via HTTP headers and responses
-4. Virtual host discovery
-
-### Phase 3 — Summary
-
-Compile a structured attack surface summary with:
-
-- All discovered subdomains
-- Open ports and services with versions
-- Technologies and frameworks detected
-- WAF/CDN identification
-- Potential entry points rated by severity (HIGH/MEDIUM/LOW)
-
-Save all results to `output/{target}/recon/`.
+Return asset counts, sources, confidence, coverage gaps, and exact saved paths.

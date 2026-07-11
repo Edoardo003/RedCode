@@ -15,7 +15,7 @@ Do not describe generated output as verified merely because a tool or language m
 - `.opencode/command/`: tracked slash-command prompts.
 - `.opencode/skills/`: assessment, CTF, and HexStrike guidance loaded by agents.
 - `setup.sh`: interactive project and MCP setup.
-- `install-tools.sh`: optional root-level installer for a Debian/Ubuntu-style host.
+- `install-tools.sh`: optional APT-based installer with explicit capability profiles.
 - `redcode`: Bash launcher that loads `.env` and starts OpenCode.
 - `scripts/redcode_control.py`: doctor, migrations, engagement manifests, and scope preflight.
 - `schema.sql`: current SQLite schema; `migrations/` upgrades existing databases.
@@ -61,6 +61,7 @@ The `redcode` launcher exposes these local commands before delegating all other 
 - `./redcode db migrate`: initialize or upgrade SQLite to the current schema.
 - `./redcode engagement init|validate|activate`: manage the active JSON manifest.
 - `./redcode scope check <target> <action>`: return a deterministic `ALLOW` or `DENY` decision.
+- `./redcode stats`: show OpenCode usage for this repository path; `--all` shows the full local data store.
 
 When an engagement manifest exists, the launcher validates and activates it before OpenCode starts. The runtime copy is `output/.redcode/current-engagement.json`, which is readable through the constrained filesystem MCP. Agents must treat `out_of_scope` as higher priority than `in_scope` and must not perform actions absent from `allowed_actions`.
 

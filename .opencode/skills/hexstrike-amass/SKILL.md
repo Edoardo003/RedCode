@@ -102,9 +102,9 @@ subfinder_scan(domain="example.com", flags="--proxy http://user:pass@host:port")
 
 ---
 
-## MANDATORY: Multi-Tool Strategy
+## Corroborating Discovery
 
-You MUST use at least 3 subdomain enumeration methods. Each tool finds different subdomains:
+Use additional discovery methods when they are likely to add independent coverage:
 
 1. **amass_enum** — broadest source coverage, DNS brute-force
 2. **subfinder_scan** — fastest passive, good for quick baseline
@@ -112,7 +112,7 @@ You MUST use at least 3 subdomain enumeration methods. Each tool finds different
 4. **DNS brute-force** — amass `-brute` or gobuster dns mode
 5. **theharvester** — catches subdomains from search engines
 
-**Merge and deduplicate** results from all tools into one list. If total is under 3 subdomains, something went wrong — run more tools.
+Merge and deduplicate results into one list. A small result set may be legitimate; record the sources used and remaining coverage uncertainty.
 
 ## Retry Strategy
 

@@ -1,6 +1,6 @@
 ---
 name: "hexstrike-osint"
-description: "Correct parameters and usage patterns for HexStrike bugbounty_osint_gathering MCP tool — full automated OSINT workflow."
+description: "Parameters and review notes for the HexStrike bugbounty_osint_gathering MCP tool."
 ---
 
 # HexStrike bugbounty_osint_gathering — Tool Skill
@@ -20,7 +20,7 @@ Full automated OSINT workflow. Single-command intelligence gathering that runs d
 bugbounty_osint_gathering(domain="example.com")
 ```
 
-That's it. This tool runs a comprehensive workflow internally:
+The wrapper runs several collection methods internally:
 
 1. **Domain Intelligence** — WHOIS, DNS records, certificate transparency, IP ranges
 2. **Social Media Intelligence** — sherlock-style username search, LinkedIn, social media
@@ -29,13 +29,13 @@ That's it. This tool runs a comprehensive workflow internally:
 
 ## When to Use
 
-- **ALWAYS** run this as the FIRST OSINT tool for any new target
+- Use this early when its broad collection matches the approved objective
 - After recon completes and before detailed OSINT techniques
 - When you need a quick intelligence baseline on a domain
 
 ## What It Does NOT Cover
 
-Despite being comprehensive, this tool does NOT replace:
+This tool does not replace:
 
 - **Deep search analysis** — use results returned by authorized HexStrike OSINT tools
 - **Manual breach checks** — use authorized public breach sources when available

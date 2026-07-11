@@ -1,580 +1,110 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+usage() {
+  cat <<'EOF'
+Usage: sudo ./install-tools.sh [profile ...]
 
-info()  { echo -e "${CYAN}[*]${NC} $1"; }
-ok()    { echo -e "${GREEN}[+]${NC} $1"; }
-warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
-fail()  { echo -e "${RED}[-]${NC} $1"; }
+Install security tools available from the host's configured APT repositories.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HEXSTRIKE_DIR="${SCRIPT_DIR}/hexstrike-ai"
+Profiles:
+  core      Basic discovery and data-processing tools
+  web       Web discovery and validation tools
+  network   Network and SMB enumeration tools
+  ctf       Local binary, password, and artifact-analysis tools
+  all       Every profile above
 
-echo ""
-echo -e "${RED}╔══════════════════════════════════════╗${NC}"
-echo -e "${RED}║    HexStrike Tools Installer         ║${NC}"
-echo -e "${RED}║    150+ Security Tools               ║${NC}"
-echo -e "${RED}╚══════════════════════════════════════╝${NC}"
-echo ""
+With no arguments, the script installs the core and web profiles.
+It does not add third-party repositories or execute remote install scripts.
+EOF
+}
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  usage
+  exit 0
+fi
 
 if [ "$(id -u)" -ne 0 ]; then
-  fail "This script must be run as root (sudo ./install-tools.sh)"
+  echo "error: run this installer as root" >&2
   exit 1
 fi
 
-installed=0
-skipped=0
-failed=0
+if ! command -v apt-get >/dev/null 2>&1 || ! command -v apt-cache >/dev/null 2>&1; then
+  echo "error: this installer requires an APT-based Linux distribution" >&2
+  exit 1
+fi
 
-try_install() {
-  local name="$1"
-  shift
-  if command -v "$name" &>/dev/null; then
-    ok "$name (already installed)"
-    skipped=$((skipped + 1))
-    return 0
+declare -A PROFILE_PACKAGES=(
+  [core]="nmap dnsutils whois jq curl git"
+  [web]="gobuster ffuf nikto sqlmap hydra whatweb"
+  [network]="masscan arp-scan smbclient enum4linux"
+  [ctf]="gdb binutils checksec radare2 binwalk foremost steghide libimage-exiftool-perl john hashcat"
+)
+
+profiles=("$@")
+if [ "${#profiles[@]}" -eq 0 ]; then
+  profiles=(core web)
+fi
+
+expanded=()
+for profile in "${profiles[@]}"; do
+  if [ "$profile" = "all" ]; then
+    expanded=(core web network ctf)
+    break
   fi
-  if "$@" &>/dev/null 2>&1; then
-    ok "$name"
-    installed=$((installed + 1))
+  if [ -z "${PROFILE_PACKAGES[$profile]+x}" ]; then
+    echo "error: unknown profile '$profile'" >&2
+    usage >&2
+    exit 2
+  fi
+  expanded+=("$profile")
+done
+
+packages=()
+for profile in "${expanded[@]}"; do
+  read -r -a profile_packages <<< "${PROFILE_PACKAGES[$profile]}"
+  packages+=("${profile_packages[@]}")
+done
+
+mapfile -t packages < <(printf '%s\n' "${packages[@]}" | sort -u)
+
+echo "Updating APT metadata..."
+apt-get update
+
+installed=()
+unavailable=()
+failed=()
+
+for package in "${packages[@]}"; do
+  if dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q "ok installed"; then
+    installed+=("$package (already present)")
+    continue
+  fi
+  if ! apt-cache show "$package" >/dev/null 2>&1; then
+    unavailable+=("$package")
+    continue
+  fi
+  echo "Installing $package..."
+  if apt-get install -y "$package"; then
+    installed+=("$package")
   else
-    warn "Failed: $name"
-    failed=$((failed + 1))
+    failed+=("$package")
   fi
-}
+done
 
-go_install() {
-  local name="$1"
-  local pkg="$2"
-  if command -v "$name" &>/dev/null; then
-    ok "$name (already installed)"
-    skipped=$((skipped + 1))
-    return 0
-  fi
-  if ! command -v go &>/dev/null; then
-    warn "Skipped $name (go not installed)"
-    failed=$((failed + 1))
-    return 1
-  fi
-  info "go install $name ..."
-  go install "$pkg" 2>&1 | tail -5 || true
-  local bin="${GOPATH:-/root/go}/bin/$name"
-  if [ -f "$bin" ]; then
-    ln -sf "$bin" "/usr/local/bin/$name"
-    ok "$name (go install → symlinked to /usr/local/bin)"
-    installed=$((installed + 1))
-    return 0
-  fi
-  warn "Failed: $name (binary not produced by go install $pkg)"
-  failed=$((failed + 1))
-  return 1
-}
+echo
+echo "Profiles: ${expanded[*]}"
+echo "Installed or present: ${#installed[@]}"
+echo "Unavailable in configured repositories: ${#unavailable[@]}"
+echo "Failed: ${#failed[@]}"
 
-pip_install() {
-  local name="$1"
-  local pkg="${2:-$1}"
-  if command -v "$name" &>/dev/null; then
-    ok "$name (already installed)"
-    skipped=$((skipped + 1))
-    return 0
-  fi
-  if pip3 install "$pkg" --quiet &>/dev/null 2>&1; then
-    ok "$name (pip)"
-    installed=$((installed + 1))
-  else
-    warn "Failed: $name (pip install $pkg)"
-    failed=$((failed + 1))
-  fi
-}
-
-# ── System update ──────────────────────────────────────────────
-
-info "Updating package lists..."
-apt-get update -qq
-
-# ── Go toolchain (needed for many security tools) ─────────────
-# IMPORTANT: apt's golang-go gives Go 1.18-1.19 which is TOO OLD.
-# nuclei, httpx, katana, subfinder, ffuf, dalfox all need Go 1.21+.
-# Install from go.dev official binary for Go 1.22+.
-
-GO_VERSION="1.23.4"
-
-if command -v go &>/dev/null; then
-  CURRENT_GO=$(go version 2>/dev/null | grep -oP 'go\K[0-9]+\.[0-9]+' || echo "0.0")
-  MAJOR=$(echo "$CURRENT_GO" | cut -d. -f1)
-  MINOR=$(echo "$CURRENT_GO" | cut -d. -f2)
-  if [ "$MAJOR" -ge 1 ] && [ "$MINOR" -ge 22 ]; then
-    ok "Go $(go version 2>/dev/null | awk '{print $3}') (already installed, version OK)"
-  else
-    warn "Go $CURRENT_GO is too old (need 1.22+). Upgrading..."
-    rm -rf /usr/local/go
-    info "Downloading Go ${GO_VERSION} from go.dev..."
-    wget -q "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -O /tmp/go.tar.gz 2>/dev/null \
-      && tar -C /usr/local -xzf /tmp/go.tar.gz 2>/dev/null \
-      && rm -f /tmp/go.tar.gz \
-      && ok "Go ${GO_VERSION} (upgraded from go.dev)" \
-      || { warn "Go upgrade failed"; }
-  fi
-else
-  info "Installing Go ${GO_VERSION} from go.dev..."
-  wget -q "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -O /tmp/go.tar.gz 2>/dev/null \
-    && tar -C /usr/local -xzf /tmp/go.tar.gz 2>/dev/null \
-    && rm -f /tmp/go.tar.gz \
-    && ok "Go ${GO_VERSION} (installed from go.dev)" \
-    || { warn "Go installation failed. Go-based tools will be skipped."; }
+if [ "${#unavailable[@]}" -gt 0 ]; then
+  printf 'Unavailable: %s\n' "${unavailable[*]}"
+fi
+if [ "${#failed[@]}" -gt 0 ]; then
+  printf 'Failed: %s\n' "${failed[*]}" >&2
+  exit 1
 fi
 
-if [ -d "/usr/local/go/bin" ]; then
-  export GOPATH="${GOPATH:-/root/go}"
-  export PATH="/usr/local/go/bin:$GOPATH/bin:$PATH"
-  ok "Go $(go version 2>/dev/null | awk '{print $3}')"
-fi
-
-# ── Python toolchain ──────────────────────────────────────────
-
-info "Ensuring pip3 and venv..."
-apt-get install -y -qq python3-pip python3-venv python3-dev 2>/dev/null || true
-
-# ── Common build dependencies ─────────────────────────────────
-
-info "Installing build dependencies..."
-apt-get install -y -qq \
-  build-essential libssl-dev libffi-dev git curl wget unzip \
-  libpcap-dev libxml2-dev libxslt1-dev zlib1g-dev \
-  2>/dev/null || true
-
-# ══════════════════════════════════════════════════════════════
-# NETWORK RECONNAISSANCE & SCANNING (25+ tools)
-# ══════════════════════════════════════════════════════════════
-
-echo ""
-info "═══ Network Reconnaissance & Scanning ═══"
-
-try_install nmap       apt-get install -y -qq nmap
-try_install masscan    apt-get install -y -qq masscan
-try_install fierce     pip3 install --quiet fierce
-try_install dnsenum    apt-get install -y -qq dnsenum
-try_install theharvester pip3 install --quiet theHarvester
-try_install arp-scan   apt-get install -y -qq arp-scan
-try_install nbtscan    apt-get install -y -qq nbtscan
-try_install rpcclient  apt-get install -y -qq samba-common-bin
-try_install enum4linux apt-get install -y -qq enum4linux
-try_install smbmap     pip3 install --quiet smbmap
-try_install responder  pip3 install --quiet Responder
-try_install netexec    pip3 install --quiet netexec
-
-# RustScan (Rust binary — NOT a Go tool, install via deb from GitHub)
-if ! command -v rustscan &>/dev/null; then
-  info "Installing RustScan via deb (2.4.1)..."
-  wget -q "https://github.com/bee-san/RustScan/releases/download/2.4.1/rustscan.deb.zip" -O /tmp/rustscan.deb.zip 2>/dev/null \
-    && unzip -o /tmp/rustscan.deb.zip -d /tmp/rustscan_deb/ 2>/dev/null \
-    && dpkg -i /tmp/rustscan_deb/*.deb 2>/dev/null \
-    && ok "rustscan (deb 2.4.1)" && installed=$((installed + 1)) \
-    || { warn "Failed: rustscan"; failed=$((failed + 1)); }
-  rm -rf /tmp/rustscan.deb.zip /tmp/rustscan_deb
-else
-  ok "rustscan (already installed)"
-  skipped=$((skipped + 1))
-fi
-
-go_install amass       "github.com/owasp-amass/amass/v4/...@master"
-go_install subfinder   "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"
-go_install nuclei      "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"
-go_install httpx       "github.com/projectdiscovery/httpx/cmd/httpx@latest"
-
-pip_install autorecon  "autorecon"
-
-# enum4linux-ng
-if ! command -v enum4linux-ng &>/dev/null; then
-  pip_install enum4linux-ng "enum4linux-ng"
-fi
-
-# ══════════════════════════════════════════════════════════════
-# WEB APPLICATION SECURITY (40+ tools)
-# ══════════════════════════════════════════════════════════════
-
-echo ""
-info "═══ Web Application Security ═══"
-
-try_install gobuster   apt-get install -y -qq gobuster
-try_install dirb       apt-get install -y -qq dirb
-try_install nikto      apt-get install -y -qq nikto
-try_install sqlmap     apt-get install -y -qq sqlmap
-try_install whatweb    apt-get install -y -qq whatweb
-try_install wfuzz      pip3 install --quiet wfuzz
-try_install commix     pip3 install --quiet commix
-
-pip_install dirsearch  "dirsearch"
-pip_install arjun      "arjun"
-pip_install paramspider "paramspider"
-pip_install wafw00f    "wafw00f"
-
-# feroxbuster (Rust binary — NOT a Go tool, install via apt or GitHub release)
-if ! command -v feroxbuster &>/dev/null; then
-  apt-get install -y -qq feroxbuster 2>/dev/null \
-    && ok "feroxbuster (apt)" && installed=$((installed + 1)) \
-    || {
-      info "Installing feroxbuster from GitHub..."
-      wget -q "https://github.com/epi052/feroxbuster/releases/latest/download/x86_64-linux-feroxbuster.tar.gz" -O /tmp/ferox.tar.gz 2>/dev/null \
-        && tar -xzf /tmp/ferox.tar.gz -C /usr/local/bin/ feroxbuster 2>/dev/null \
-        && chmod +x /usr/local/bin/feroxbuster 2>/dev/null \
-        && ok "feroxbuster (github release)" && installed=$((installed + 1)) \
-        || { warn "Failed: feroxbuster"; failed=$((failed + 1)); }
-      rm -f /tmp/ferox.tar.gz
-    }
-else
-  ok "feroxbuster (already installed)"
-  skipped=$((skipped + 1))
-fi
-
-go_install ffuf        "github.com/ffuf/ffuf/v2@latest"
-go_install httpx       "github.com/projectdiscovery/httpx/cmd/httpx@latest"
-go_install katana      "github.com/projectdiscovery/katana/cmd/katana@latest"
-go_install dalfox      "github.com/hahwul/dalfox/v2@latest"
-go_install hakrawler   "github.com/hakluke/hakrawler@latest"
-go_install gau         "github.com/lc/gau/v2/cmd/gau@latest"
-go_install waybackurls "github.com/tomnomnom/waybackurls@latest"
-go_install anew        "github.com/tomnomnom/anew@latest"
-go_install qsreplace   "github.com/tomnomnom/qsreplace@latest"
-pip_install uro        "uro"
-
-# WPScan (Ruby gem)
-if ! command -v wpscan &>/dev/null; then
-  if command -v gem &>/dev/null; then
-    gem install wpscan --quiet 2>/dev/null && ok "wpscan (gem)" && installed=$((installed + 1)) || { warn "Failed: wpscan"; failed=$((failed + 1)); }
-  else
-    apt-get install -y -qq ruby ruby-dev 2>/dev/null && gem install wpscan --quiet 2>/dev/null \
-      && ok "wpscan (gem)" && installed=$((installed + 1)) \
-      || { warn "Failed: wpscan (needs ruby)"; failed=$((failed + 1)); }
-  fi
-else
-  ok "wpscan (already installed)"
-  skipped=$((skipped + 1))
-fi
-
-# X8 parameter discovery
-go_install x8 "github.com/Sh1Yo/x8@latest" 2>/dev/null || true
-
-# SSL/TLS tools
-try_install testssl    apt-get install -y -qq testssl.sh
-try_install sslscan    apt-get install -y -qq sslscan
-pip_install sslyze     "sslyze"
-
-# JWT tool
-pip_install jwt_tool   "jwt-tool" 2>/dev/null || pip_install jwt_tool "PyJWT"
-
-# NoSQLMap
-pip_install nosqlmap   "nosqlmap" 2>/dev/null || true
-
-# Tplmap
-if ! command -v tplmap &>/dev/null && [ ! -d "/opt/tplmap" ]; then
-  git clone --quiet https://github.com/epinna/tplmap.git /opt/tplmap 2>/dev/null \
-    && ln -sf /opt/tplmap/tplmap.py /usr/local/bin/tplmap 2>/dev/null \
-    && ok "tplmap (git)" && installed=$((installed + 1)) \
-    || { warn "Failed: tplmap"; failed=$((failed + 1)); }
-elif [ -d "/opt/tplmap" ]; then
-  ok "tplmap (already installed)"
-  skipped=$((skipped + 1))
-fi
-
-# ══════════════════════════════════════════════════════════════
-# PASSWORD & AUTHENTICATION (12+ tools)
-# ══════════════════════════════════════════════════════════════
-
-echo ""
-info "═══ Password & Authentication ═══"
-
-try_install hydra      apt-get install -y -qq hydra
-try_install john       apt-get install -y -qq john
-try_install hashcat    apt-get install -y -qq hashcat
-try_install medusa     apt-get install -y -qq medusa
-try_install ophcrack   apt-get install -y -qq ophcrack
-
-pip_install patator    "patator"
-pip_install hash-identifier "hash-identifier" 2>/dev/null || true
-
-# Evil-WinRM (Ruby gem)
-if ! command -v evil-winrm &>/dev/null; then
-  gem install evil-winrm --quiet 2>/dev/null && ok "evil-winrm (gem)" && installed=$((installed + 1)) || { warn "Failed: evil-winrm"; failed=$((failed + 1)); }
-else
-  ok "evil-winrm (already installed)"
-  skipped=$((skipped + 1))
-fi
-
-# CrackMapExec (legacy, netexec is successor)
-pip_install crackmapexec "crackmapexec" 2>/dev/null || true
-
-# ══════════════════════════════════════════════════════════════
-# BINARY ANALYSIS & REVERSE ENGINEERING (25+ tools)
-# ══════════════════════════════════════════════════════════════
-
-echo ""
-info "═══ Binary Analysis & Reverse Engineering ═══"
-
-try_install gdb        apt-get install -y -qq gdb
-try_install r2         apt-get install -y -qq radare2
-try_install binwalk    apt-get install -y -qq binwalk
-try_install strings    apt-get install -y -qq binutils
-try_install objdump    apt-get install -y -qq binutils
-try_install readelf    apt-get install -y -qq binutils
-try_install xxd        apt-get install -y -qq xxd
-try_install upx        apt-get install -y -qq upx-ucl
-try_install foremost   apt-get install -y -qq foremost
-try_install steghide   apt-get install -y -qq steghide
-try_install exiftool   apt-get install -y -qq libimage-exiftool-perl
-try_install checksec   apt-get install -y -qq checksec
-
-pip_install volatility3 "volatility3"
-pip_install pwntools   "pwntools"
-pip_install angr       "angr"
-pip_install ropper     "ropper"
-
-# ROPgadget
-pip_install ROPgadget  "ROPgadget"
-
-# one_gadget (Ruby)
-if ! command -v one_gadget &>/dev/null; then
-  gem install one_gadget --quiet 2>/dev/null && ok "one_gadget (gem)" && installed=$((installed + 1)) || { warn "Failed: one_gadget"; failed=$((failed + 1)); }
-else
-  ok "one_gadget (already installed)"
-  skipped=$((skipped + 1))
-fi
-
-# GDB plugins (PEDA, GEF)
-if [ ! -d "/opt/peda" ]; then
-  git clone --quiet https://github.com/longld/peda.git /opt/peda 2>/dev/null && ok "gdb-peda (git)" && installed=$((installed + 1)) || { warn "Failed: gdb-peda"; failed=$((failed + 1)); }
-else
-  ok "gdb-peda (already installed)"
-  skipped=$((skipped + 1))
-fi
-
-if [ ! -f "/root/.gdbinit-gef.py" ] && [ ! -f "/opt/gef/gef.py" ]; then
-  wget -q -O /root/.gdbinit-gef.py https://gef.blah.cat/py 2>/dev/null && ok "gdb-gef" && installed=$((installed + 1)) || { warn "Failed: gdb-gef"; failed=$((failed + 1)); }
-else
-  ok "gdb-gef (already installed)"
-  skipped=$((skipped + 1))
-fi
-
-# Ghidra (headless, large download)
-if ! command -v ghidra &>/dev/null && [ ! -d "/opt/ghidra" ]; then
-  info "Installing Ghidra (this may take a while)..."
-  apt-get install -y -qq default-jdk 2>/dev/null || true
-  GHIDRA_VER="11.3.1"
-  GHIDRA_DATE="20250205"
-  wget -q "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VER}_build/ghidra_${GHIDRA_VER}_PUBLIC_${GHIDRA_DATE}.zip" -O /tmp/ghidra.zip 2>/dev/null \
-    && unzip -q /tmp/ghidra.zip -d /opt/ 2>/dev/null \
-    && mv /opt/ghidra_${GHIDRA_VER}_PUBLIC /opt/ghidra 2>/dev/null \
-    && ln -sf /opt/ghidra/ghidraRun /usr/local/bin/ghidra 2>/dev/null \
-    && ok "ghidra ${GHIDRA_VER}" && installed=$((installed + 1)) \
-    || { warn "Failed: ghidra (manual install may be needed)"; failed=$((failed + 1)); }
-  rm -f /tmp/ghidra.zip
-elif [ -d "/opt/ghidra" ]; then
-  ok "ghidra (already installed)"
-  skipped=$((skipped + 1))
-fi
-
-# MSFVenom (Metasploit)
-if ! command -v msfvenom &>/dev/null; then
-  info "Installing Metasploit Framework..."
-  curl -sL https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb > /tmp/msfinstall 2>/dev/null \
-    && chmod +x /tmp/msfinstall \
-    && /tmp/msfinstall 2>/dev/null \
-    && ok "metasploit-framework" && installed=$((installed + 1)) \
-    || { warn "Failed: metasploit (manual install may be needed)"; failed=$((failed + 1)); }
-  rm -f /tmp/msfinstall
-else
-  ok "msfvenom (already installed)"
-  skipped=$((skipped + 1))
-fi
-
-# ══════════════════════════════════════════════════════════════
-# CLOUD & CONTAINER SECURITY (20+ tools)
-# ══════════════════════════════════════════════════════════════
-
-echo ""
-info "═══ Cloud & Container Security ═══"
-
-pip_install prowler    "prowler"
-pip_install scoutsuite "scoutsuite"
-pip_install checkov    "checkov"
-
-# Trivy
-if ! command -v trivy &>/dev/null; then
-  wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key 2>/dev/null | gpg --dearmor -o /usr/share/keyrings/trivy.gpg 2>/dev/null
-  echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" > /etc/apt/sources.list.d/trivy.list 2>/dev/null
-  apt-get update -qq 2>/dev/null && apt-get install -y -qq trivy 2>/dev/null \
-    && ok "trivy (apt)" && installed=$((installed + 1)) \
-    || { warn "Failed: trivy"; failed=$((failed + 1)); }
-else
-  ok "trivy (already installed)"
-  skipped=$((skipped + 1))
-fi
-
-# Kube tools
-go_install kube-hunter "github.com/aquasecurity/kube-hunter@latest" 2>/dev/null || pip_install kube-hunter "kube-hunter"
-if ! command -v kube-bench &>/dev/null; then
-  go_install kube-bench "github.com/aquasecurity/kube-bench@latest" 2>/dev/null || { warn "Failed: kube-bench"; failed=$((failed + 1)); }
-fi
-
-# Docker bench
-if [ ! -d "/opt/docker-bench-security" ]; then
-  git clone --quiet https://github.com/docker/docker-bench-security.git /opt/docker-bench-security 2>/dev/null \
-    && ok "docker-bench-security (git)" && installed=$((installed + 1)) \
-    || { warn "Failed: docker-bench-security"; failed=$((failed + 1)); }
-else
-  ok "docker-bench-security (already installed)"
-  skipped=$((skipped + 1))
-fi
-
-# Cloud CLIs
-try_install aws        apt-get install -y -qq awscli
-try_install kubectl    apt-get install -y -qq kubectl 2>/dev/null || {
-  if ! command -v kubectl &>/dev/null; then
-    curl -sLO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
-      && install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl \
-      && rm -f kubectl \
-      && ok "kubectl" && installed=$((installed + 1)) \
-      || { warn "Failed: kubectl"; failed=$((failed + 1)); }
-  fi
-}
-
-# ══════════════════════════════════════════════════════════════
-# CTF & FORENSICS (20+ tools)
-# ══════════════════════════════════════════════════════════════
-
-echo ""
-info "═══ CTF & Forensics ═══"
-
-try_install scalpel    apt-get install -y -qq scalpel
-try_install testdisk   apt-get install -y -qq testdisk
-try_install photorec   apt-get install -y -qq testdisk
-
-# Steg tools
-if ! command -v zsteg &>/dev/null; then
-  gem install zsteg --quiet 2>/dev/null && ok "zsteg (gem)" && installed=$((installed + 1)) || { warn "Failed: zsteg"; failed=$((failed + 1)); }
-else
-  ok "zsteg (already installed)"
-  skipped=$((skipped + 1))
-fi
-
-pip_install stegsolve  "stegsolve" 2>/dev/null || true
-pip_install z3         "z3-solver"
-pip_install outguess   "outguess" 2>/dev/null || {
-  try_install outguess apt-get install -y -qq outguess
-}
-
-# Bulk extractor
-try_install bulk_extractor apt-get install -y -qq bulk-extractor
-
-# Sleuth Kit / Autopsy
-try_install fls        apt-get install -y -qq sleuthkit
-try_install autopsy    apt-get install -y -qq autopsy
-
-# ══════════════════════════════════════════════════════════════
-# BUG BOUNTY & OSINT (20+ tools)
-# ══════════════════════════════════════════════════════════════
-
-echo ""
-info "═══ Bug Bounty & OSINT ═══"
-
-pip_install sherlock   "sherlock-project"
-pip_install social-analyzer "social-analyzer"
-pip_install recon-ng   "recon-ng"
-pip_install spiderfoot "spiderfoot"
-pip_install trufflehog "trufflehog" 2>/dev/null || go_install trufflehog "github.com/trufflesecurity/trufflehog@latest"
-
-go_install subjack     "github.com/haccer/subjack@latest"
-go_install aquatone    "github.com/michenriksen/aquatone@latest" 2>/dev/null || true
-
-# ══════════════════════════════════════════════════════════════
-# BROWSER AGENT REQUIREMENTS
-# ══════════════════════════════════════════════════════════════
-
-echo ""
-info "═══ Browser Agent (Chromium) ═══"
-
-try_install chromium-browser apt-get install -y -qq chromium-browser
-if ! command -v chromium-browser &>/dev/null; then
-  try_install chromium apt-get install -y -qq chromium
-fi
-try_install chromedriver apt-get install -y -qq chromium-chromedriver
-
-pip_install selenium   "selenium"
-
-# ══════════════════════════════════════════════════════════════
-# HEXSTRIKE PYTHON DEPENDENCIES
-# ══════════════════════════════════════════════════════════════
-
-echo ""
-info "═══ HexStrike Python Dependencies ═══"
-
-if [ -d "$HEXSTRIKE_DIR" ]; then
-  if [ -f "$HEXSTRIKE_DIR/requirements.txt" ]; then
-    pip3 install -r "$HEXSTRIKE_DIR/requirements.txt" --quiet 2>/dev/null \
-      && ok "hexstrike-ai requirements.txt" \
-      || warn "Some HexStrike deps failed — run: pip3 install -r hexstrike-ai/requirements.txt"
-  fi
-else
-  warn "hexstrike-ai/ not found — run setup.sh first to clone it"
-fi
-
-# ══════════════════════════════════════════════════════════════
-# PERSIST GO PATH FOR FUTURE SHELL SESSIONS
-# ══════════════════════════════════════════════════════════════
-
-echo ""
-info "═══ Persisting Go PATH ═══"
-
-cat > /etc/profile.d/go-path.sh << 'GOEOF'
-export GOPATH="${GOPATH:-/root/go}"
-export PATH="/usr/local/go/bin:$GOPATH/bin:$PATH"
-GOEOF
-chmod +x /etc/profile.d/go-path.sh
-ok "Go PATH persisted to /etc/profile.d/go-path.sh"
-
-if ! grep -q 'go-path.sh' /root/.bashrc 2>/dev/null; then
-  echo 'source /etc/profile.d/go-path.sh' >> /root/.bashrc
-  ok "Added Go PATH to /root/.bashrc"
-fi
-
-# ══════════════════════════════════════════════════════════════
-# NUCLEI TEMPLATES
-# ══════════════════════════════════════════════════════════════
-
-echo ""
-info "═══ Updating Nuclei Templates ═══"
-
-if command -v nuclei &>/dev/null; then
-  nuclei -update-templates -silent 2>/dev/null && ok "nuclei templates updated" || warn "nuclei template update failed"
-fi
-
-# ══════════════════════════════════════════════════════════════
-# SUMMARY
-# ══════════════════════════════════════════════════════════════
-
-total=$((installed + skipped + failed))
-echo ""
-echo -e "${GREEN}╔══════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║    Installation Complete!            ║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════╝${NC}"
-echo ""
-echo -e "  ${GREEN}Installed:${NC} $installed"
-echo -e "  ${CYAN}Already OK:${NC} $skipped"
-echo -e "  ${YELLOW}Failed:${NC}    $failed"
-echo -e "  Total:     $total"
-echo ""
-
-if [ "$failed" -gt 0 ]; then
-  warn "Some tools failed to install. Check output above for details."
-  warn "Many tools have special requirements (Kali repos, manual builds, etc.)"
-  echo ""
-fi
-
-echo "Start HexStrike server:  python3 hexstrike-ai/hexstrike_server.py"
-echo "Launch RedCode:          ./redcode"
-echo ""
+echo
+echo "Run './redcode doctor' to inspect the capabilities visible to HexStrike."

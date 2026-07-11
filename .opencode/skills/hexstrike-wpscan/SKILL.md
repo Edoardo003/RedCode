@@ -110,7 +110,7 @@ wpscan_analyze(target="...", flags="--proxy http://user:pass@host:port")
 - **Users enumerated** - each user is a brute-force target. Admin users are highest priority.
 - **Vulnerable plugins** - cross-reference with searchsploit for public exploits.
 - **Outdated WordPress core** - check specific CVEs for the detected version.
-- **Config backups found** - CRITICAL. Download and check for database credentials.
+- **Config backups found** - sensitive evidence; preserve the minimum necessary content and derive severity from confirmed exposure.
 - **XML-RPC enabled** - can be used for brute-force amplification and SSRF.
 - **Debug log found** - may contain errors with file paths, credentials, internal info.
 - **Brute-force success** - VERIFY by actually logging in. WPScan uses response analysis, not 100% reliable.

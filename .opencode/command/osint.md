@@ -1,24 +1,17 @@
 ---
-description: "Run OSINT intelligence gathering on a target"
+description: "Gather assessment-relevant public intelligence"
 agent: osint
 ---
 
-Run comprehensive OSINT intelligence gathering on:
+Gather public intelligence for:
 
 $ARGUMENTS
 
-## Instructions
+1. Validate the target and collection purpose against the active engagement.
+2. Read existing reconnaissance and avoid expanding to unrelated people or organizations.
+3. Use only relevant public or analyst-supplied sources, preserving URL and retrieval time.
+4. Minimize personal data and treat credential indicators as sensitive, unverified evidence.
+5. Correlate identities and assets before assigning confidence.
+6. Save the structured handoff to `output/{target}/osint/findings.json` and compatible records to SQLite.
 
-1. Review recon results from `output/{target}/recon/` if available — ingest subdomains, WHOIS, tech stack
-2. Run `bugbounty_osint_gathering` for full-spectrum domain/org intelligence
-3. Email harvesting: use HexStrike OSINT tools, theHarvester, and public documents
-4. Username enumeration: search social platforms, code repos, forums for employees
-5. Breach/credential lookup: use only authorized public breach sources and HexStrike OSINT tools
-6. Google dorking: exposed panels, sensitive files, directory listings, backup files
-7. Metadata extraction: harvest documents, analyze EXIF/metadata for internal paths, usernames, software
-8. Persist leaked credentials to SQLite immediately
-9. Flag new subdomains/endpoints discovered via dorking for scanner
-10. Present findings grouped by intelligence type (email, username, credential, profile, breach, document, exposure)
-11. For each finding include: type, confidence, source, raw evidence, actionable next steps
-
-Save all results to `output/{target}/osint/`.
+Return confirmed intelligence, useful leads, ambiguity, unavailable sources, and evidence paths.

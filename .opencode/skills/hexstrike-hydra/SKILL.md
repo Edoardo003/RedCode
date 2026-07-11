@@ -76,7 +76,7 @@ hydra_attack(target="10.10.99.120", service="mysql", username="root", passwordli
 
 ---
 
-## FALSE POSITIVE DETECTION (CRITICAL)
+## False-Positive Review
 
 **HTTP 200 does NOT mean login success.** This is the most common hydra false positive.
 

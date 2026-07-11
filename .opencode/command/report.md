@@ -1,24 +1,17 @@
 ---
-description: "Generate a security report from findings"
+description: "Generate an evidence-based security report"
 agent: reporter
 ---
 
-Generate a comprehensive security report.
+Generate the requested report for:
 
-Format requested: $ARGUMENTS
+$ARGUMENTS
 
-## Instructions
+1. Read the active engagement and all relevant JSON, SQLite, and raw evidence paths.
+2. Select `templates/generic.md`, `templates/hackerone.md`, or `templates/bugcrowd.md` from the requested format.
+3. Include only findings supported by preserved evidence; separate unverified leads.
+4. Verify severity, CVSS vector, CWE, affected asset, reproduction steps, impact, and remediation.
+5. Redact secrets and unnecessary personal data.
+6. Save the report under `output/{target}/reports/` and record reported status where supported.
 
-1. If a format was specified (hackerone, bugcrowd, generic), read the corresponding template from `templates/`
-2. If no format specified, use the generic template from `templates/generic.md`
-3. Compile all findings from:
-   - `output/{target}/recon/` — reconnaissance results
-   - `output/{target}/osint/` — intelligence results
-   - `output/{target}/scans/` — vulnerability scan results
-   - `output/{target}/exploits/` — verified exploitation evidence
-4. For each finding include: title, severity, CVSS v3.1 score + vector, CWE ID, description, steps to reproduce, impact, remediation
-5. Include an executive summary suitable for non-technical stakeholders
-6. Include a methodology section describing tools and approach used
-7. Save the report to `output/{target}/reports/`
-
-Use professional, precise language. Every finding must have evidence.
+Return the report path and a short list of evidence gaps requiring analyst review.

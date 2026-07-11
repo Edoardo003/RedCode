@@ -69,7 +69,7 @@ sqlmap_scan(target="https://example.com/search?q=test", level=5, risk=3, additio
 
 ---
 
-## CRITICAL: Always Use `--batch`
+## Non-Interactive Execution
 
 **Without `--batch`, sqlmap prompts interactively and HANGS forever.** Every sqlmap call MUST include `--batch` in `additional_args`.
 

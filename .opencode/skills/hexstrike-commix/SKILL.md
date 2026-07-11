@@ -89,7 +89,7 @@ commix(target="...", flags="--proxy=http://user:pass@host:port")
 - **OS command output visible** - PROVEN RCE. Extract: `id`, `whoami`, `cat /etc/passwd`, `uname -a`
 - **Time-based confirmed** - Blind injection. Still critical, but data extraction is slower.
 - **"Not injectable"** - parameter is safe or properly filtered. Move to next parameter.
-- **File read successful** - CRITICAL. Prove impact by reading sensitive files.
+- **File read successful** - evidence of impact; severity depends on the accessible data and execution context.
 
 ## Post-Exploitation (When Injection Found)
 
@@ -101,4 +101,4 @@ commix(target="...", flags="--proxy=http://user:pass@host:port")
 
 ## Evidence Capture
 
-Save raw commix output to `output/{target}/scans/raw/commix_*.txt`. Command injection findings are CRITICAL severity with confirmed confidence. Hand off to @exploiter for deeper exploitation.
+Save raw commix output to `output/{target}/scans/raw/commix_*.txt`. Assign severity and confidence from the reproduced execution context and impact. Hand selected findings to `@exploiter` only after approval.

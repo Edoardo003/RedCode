@@ -136,7 +136,7 @@ hashcat_crack(hashfile="output/target/hashes.txt", flags="-m 0 --show")
 
 ## Output Interpretation
 
-- **Password cracked** - CRITICAL finding. Persist to SQLite `credentials` table IMMEDIATELY.
+- **Password cracked** - sensitive evidence. Verify scope and applicability, then persist only the required credential metadata to SQLite.
 - **Partial crack (some hashes)** - report cracked ones, note remaining uncracked.
 - **No cracks** - passwords are strong or not in wordlist. Note in findings.
 - **Session restored** - john/hashcat can resume interrupted cracking sessions.

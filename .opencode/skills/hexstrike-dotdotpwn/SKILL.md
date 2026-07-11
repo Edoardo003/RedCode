@@ -103,4 +103,4 @@ When LFI is confirmed, try to escalate to RCE:
 
 ## Evidence Capture
 
-Save raw output to `output/{target}/scans/raw/dotdotpwn_*.txt`. LFI findings are HIGH/CRITICAL severity. Persist extracted file contents as evidence. Hand off to @exploiter for RCE escalation.
+Save raw output to `output/{target}/scans/raw/dotdotpwn_*.txt`. Derive severity from the confirmed files, access boundary, and impact. Preserve only the minimum necessary file evidence and request approval before further validation.
