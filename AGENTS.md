@@ -17,7 +17,9 @@ Do not describe generated output as verified merely because a tool or language m
 - `setup.sh`: interactive project and MCP setup.
 - `install-tools.sh`: optional root-level installer for a Debian/Ubuntu-style host.
 - `redcode`: Bash launcher that loads `.env` and starts OpenCode.
-- `schema.sql`: SQLite schema for targets, findings, scans, and credentials.
+- `scripts/redcode_control.py`: doctor, migrations, engagement manifests, and scope preflight.
+- `schema.sql`: current SQLite schema; `migrations/` upgrades existing databases.
+- `engagement.schema.json`: tracked engagement manifest contract.
 - `templates/`: tracked report templates.
 - `output/`: generated assessment and CTF data; ignored by Git.
 
@@ -49,7 +51,20 @@ The default assessment sequence is:
 recon -> osint -> scan -> exploit -> report
 ```
 
-Social-engineering support is optional and only valid when explicitly included in the rules of engagement. CTF work is a separate workflow and must never be mixed into assessment output or SQLite records.
+Social-engineering support is optional and only valid when explicitly included in the rules of engagement. CTF challenge data is separate from assessment findings; only non-sensitive engagement metadata may be registered in SQLite.
+
+## Local Control Plane
+
+The `redcode` launcher exposes these local commands before delegating all other arguments to OpenCode:
+
+- `./redcode doctor`: validate commands, paths, manifest, database, HexStrike capabilities, and MCP status.
+- `./redcode db migrate`: initialize or upgrade SQLite to the current schema.
+- `./redcode engagement init|validate|activate`: manage the active JSON manifest.
+- `./redcode scope check <target> <action>`: return a deterministic `ALLOW` or `DENY` decision.
+
+When an engagement manifest exists, the launcher validates and activates it before OpenCode starts. The runtime copy is `output/.redcode/current-engagement.json`, which is readable through the constrained filesystem MCP. Agents must treat `out_of_scope` as higher priority than `in_scope` and must not perform actions absent from `allowed_actions`.
+
+This is preflight and orchestration enforcement, not a network sandbox. HexStrike calls are not currently routed through a policy proxy. Never claim that the manifest physically prevents every out-of-scope request.
 
 ## Authorization and Human Control
 
@@ -124,16 +139,22 @@ Required practices:
 
 ## SQLite Contract
 
-[`schema.sql`](schema.sql) is the source of truth. It defines:
+[`schema.sql`](schema.sql) is the source of truth for fresh databases. It defines:
 
+- `schema_migrations`: applied database versions.
+- `engagements`: workflow and mode metadata for a declared engagement.
 - `targets`: target identifier, scope, type, status, and notes.
+- `assets`: discovered in-scope and out-of-scope asset records.
 - `findings`: normalized assessment findings linked to targets.
-- `scans`: tool execution history and output paths.
+- `scans`: phase-aware tool execution history, subdomain, exit status, and output paths.
 - `credentials`: discovered credentials linked to targets and findings.
+- `approvals`: explicit action and scope approvals.
+- `evidence`: evidence paths, hashes, MIME types, and sizes.
+- `finding_relations`: attack-chain and deduplication relationships.
 
-Initialize a missing database by executing `schema.sql` through the configured SQLite MCP. Do not assume migrations exist.
+Initialize or upgrade the configured database with `./redcode db migrate`. Version 1 databases are backed up before migration. The current schema version is 2.
 
-The current `scans` table does **not** contain `phase` or `subdomain` columns. Some existing resume and agent prompts reference those fields; do not issue those statements or claim reliable SQLite-assisted resume until the schema and prompts are reconciled. File-based `progress.json` checkpoints may still be used, but their creation and cleanup are prompt-driven rather than enforced by the launcher.
+The `scans.phase` and `scans.subdomain` fields support existing resume prompts. File-based `progress.json` creation and cleanup remain prompt-driven rather than transactionally enforced by the launcher, so resume is still experimental and must be verified.
 
 ## CTF Data Contract
 
@@ -185,5 +206,6 @@ Generated Nuclei templates belong under `templates/nuclei/custom/`; that directo
 - Keep model assignments in `opencode.jsonc`; do not duplicate them in prose as guaranteed availability.
 - Treat downloaded HexStrike, wordlists, browser binaries, generated output, databases, and custom templates as local state.
 - Do not commit secrets, credentials, flags, client evidence, or generated assessment data.
+- Keep local engagement manifests, databases, backups, and activated context out of Git.
 - Validate configuration, paths, schema assumptions, and internal documentation links after changes.
 - Clearly distinguish verified behavior from prompt intent and planned work.

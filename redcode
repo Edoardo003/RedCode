@@ -11,8 +11,9 @@ fi
 
 : "${HEXSTRIKE_URL:=http://localhost:8888}"
 : "${REDCODE_DB:=$DIR/redcode.db}"
+: "${REDCODE_ENGAGEMENT:=$DIR/engagement.json}"
 : "${PROXY_URL:=}"
-export HEXSTRIKE_URL REDCODE_DB PROXY_URL
+export HEXSTRIKE_URL REDCODE_DB REDCODE_ENGAGEMENT PROXY_URL
 
 # Export standard proxy env vars so tools that read http_proxy/https_proxy get proxy support for free
 if [ -n "$PROXY_URL" ]; then
@@ -20,6 +21,17 @@ if [ -n "$PROXY_URL" ]; then
   export https_proxy="$PROXY_URL"
   export HTTP_PROXY="$PROXY_URL"
   export HTTPS_PROXY="$PROXY_URL"
+fi
+
+case "${1:-}" in
+  doctor|db|engagement|scope)
+    exec python3 "$DIR/scripts/redcode_control.py" "$@"
+    ;;
+esac
+
+if [ -f "$REDCODE_ENGAGEMENT" ]; then
+  python3 "$DIR/scripts/redcode_control.py" engagement activate \
+    --file "$REDCODE_ENGAGEMENT" --quiet
 fi
 
 exec opencode "$@"

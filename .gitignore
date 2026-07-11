@@ -1,11 +1,13 @@
 # Environment
 .env
 .env.local
+engagement.json
 
 # Output & data
 output/
 redcode.db
 redcode.db-*
+redcode.db.v*-backup-*
 *.log
 
 # Wordlists (downloaded at setup, too large for git)

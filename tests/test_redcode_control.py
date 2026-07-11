@@ -1,0 +1,181 @@
+import importlib.util
+import json
+from pathlib import Path
+import sqlite3
+import tempfile
+import unittest
+
+
+MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "redcode_control.py"
+SPEC = importlib.util.spec_from_file_location("redcode_control", MODULE_PATH)
+control = importlib.util.module_from_spec(SPEC)
+assert SPEC.loader is not None
+SPEC.loader.exec_module(control)
+
+
+class ManifestTests(unittest.TestCase):
+    def setUp(self):
+        self.manifest = {
+            "schema_version": 1,
+            "name": "example-assessment",
+            "workflow": "assessment",
+            "mode": "normal",
+            "in_scope": ["example.test", "*.example.test", "10.10.0.0/16"],
+            "out_of_scope": ["admin.example.test", "10.10.99.10"],
+            "allowed_actions": ["recon", "scan", "report"],
+            "rate_limit_per_second": 10,
+            "notes": "",
+        }
+
+    def test_valid_manifest(self):
+        self.assertEqual(control.validate_manifest(self.manifest), [])
+
+    def test_ctf_manifest_rejects_assessment_actions(self):
+        self.manifest["workflow"] = "ctf"
+        self.manifest["allowed_actions"] = ["ctf", "scan"]
+        errors = control.validate_manifest(self.manifest)
+        self.assertTrue(any("CTF manifests" in error for error in errors))
+
+    def test_ctf_manifest_rejects_aggressive_mode(self):
+        self.manifest["workflow"] = "ctf"
+        self.manifest["mode"] = "aggressive"
+        self.manifest["allowed_actions"] = ["ctf"]
+        errors = control.validate_manifest(self.manifest)
+        self.assertTrue(any("normal mode" in error for error in errors))
+
+    def test_scope_allows_exact_domain(self):
+        allowed, _ = control.scope_decision(self.manifest, "example.test", "scan")
+        self.assertTrue(allowed)
+
+    def test_scope_allows_wildcard_subdomain(self):
+        allowed, _ = control.scope_decision(
+            self.manifest, "https://api.example.test/v1", "recon"
+        )
+        self.assertTrue(allowed)
+
+    def test_out_of_scope_takes_precedence(self):
+        allowed, reason = control.scope_decision(
+            self.manifest, "admin.example.test", "scan"
+        )
+        self.assertFalse(allowed)
+        self.assertIn("out-of-scope", reason)
+
+    def test_scope_allows_cidr(self):
+        allowed, _ = control.scope_decision(self.manifest, "10.10.20.5", "scan")
+        self.assertTrue(allowed)
+
+    def test_scope_denies_disallowed_action(self):
+        allowed, reason = control.scope_decision(
+            self.manifest, "example.test", "exploit"
+        )
+        self.assertFalse(allowed)
+        self.assertIn("not allowed", reason)
+
+    def test_url_rule_matches_origin_and_path(self):
+        manifest = dict(self.manifest)
+        manifest["in_scope"] = ["http://127.0.0.1:3000/api"]
+        allowed, _ = control.scope_decision(
+            manifest, "http://127.0.0.1:3000/api/Users", "scan"
+        )
+        self.assertTrue(allowed)
+        denied, _ = control.scope_decision(
+            manifest, "http://127.0.0.1:3000/rest/admin", "scan"
+        )
+        self.assertFalse(denied)
+
+
+class DatabaseTests(unittest.TestCase):
+    def test_fresh_database_uses_schema_v2(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db = Path(temp_dir) / "fresh.db"
+            version, backup = control.migrate_database(db)
+            self.assertEqual(version, 2)
+            self.assertIsNone(backup)
+            connection = sqlite3.connect(db)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertIn("engagements", control.table_names(connection))
+            self.assertIn("phase", control.table_columns(connection, "scans"))
+            connection.close()
+            repeated_version, repeated_backup = control.migrate_database(db)
+            self.assertEqual(repeated_version, 2)
+            self.assertIsNone(repeated_backup)
+
+    def test_v1_database_is_backed_up_and_migrated(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db = Path(temp_dir) / "legacy.db"
+            connection = sqlite3.connect(db)
+            connection.executescript(
+                """
+                CREATE TABLE targets (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  domain TEXT NOT NULL UNIQUE
+                );
+                CREATE TABLE findings (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  target_id INTEGER,
+                  finding_id TEXT UNIQUE NOT NULL,
+                  phase TEXT NOT NULL,
+                  type TEXT NOT NULL,
+                  severity TEXT NOT NULL,
+                  title TEXT NOT NULL
+                );
+                CREATE TABLE scans (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  target_id INTEGER,
+                  tool TEXT NOT NULL,
+                  command TEXT,
+                  status TEXT DEFAULT 'running'
+                );
+                CREATE TABLE credentials (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  target_id INTEGER,
+                  finding_id INTEGER
+                );
+                INSERT INTO targets(domain) VALUES ('legacy.example.test');
+                """
+            )
+            connection.close()
+
+            version, backup = control.migrate_database(db)
+            self.assertEqual(version, 2)
+            self.assertIsNotNone(backup)
+            self.assertTrue(backup.exists())
+
+            connection = sqlite3.connect(db)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(
+                connection.execute("SELECT domain FROM targets").fetchone()[0],
+                "legacy.example.test",
+            )
+            scan_columns = control.table_columns(connection, "scans")
+            self.assertTrue({"phase", "subdomain", "exit_code"} <= scan_columns)
+            connection.close()
+
+
+class ManifestFileTests(unittest.TestCase):
+    def test_example_manifest_is_valid(self):
+        example = json.loads(
+            (Path(__file__).resolve().parents[1] / "engagement.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(control.validate_manifest(example), [])
+
+    def test_activation_writes_opencode_context(self):
+        example_path = Path(__file__).resolve().parents[1] / "engagement.example.json"
+        example = json.loads(example_path.read_text(encoding="utf-8"))
+        original_root = control.ROOT
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                control.ROOT = Path(temp_dir)
+                context = control.activate_manifest(example_path, example, quiet=True)
+                self.assertTrue(context.is_file())
+                activated = json.loads(context.read_text(encoding="utf-8"))
+                self.assertEqual(activated["name"], "juice-shop-local")
+                self.assertIn("activated_at", activated)
+        finally:
+            control.ROOT = original_root
+
+
+if __name__ == "__main__":
+    unittest.main()

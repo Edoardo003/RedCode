@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Edoardo003/RedCode/engagement.schema.json",
+  "title": "RedCode engagement manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "name",
+    "workflow",
+    "mode",
+    "in_scope",
+    "out_of_scope",
+    "allowed_actions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "workflow": {
+      "enum": ["assessment", "ctf"]
+    },
+    "mode": {
+      "enum": ["normal", "aggressive"]
+    },
+    "in_scope": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "out_of_scope": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "allowed_actions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "recon",
+          "osint",
+          "scan",
+          "exploit",
+          "socialeng",
+          "templates",
+          "report",
+          "ctf"
+        ]
+      }
+    },
+    "rate_limit_per_second": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "workflow": {
+            "const": "ctf"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "mode": {
+            "const": "normal"
+          }
+        }
+      }
+    }
+  ]
+}

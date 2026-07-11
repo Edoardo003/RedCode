@@ -61,6 +61,18 @@ if command -v node &>/dev/null; then
   fi
 fi
 
+if command -v python3 &>/dev/null; then
+  python_version="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+  python_major="${python_version%%.*}"
+  python_minor="${python_version#*.}"
+  if [ "$python_major" -lt 3 ] || { [ "$python_major" -eq 3 ] && [ "$python_minor" -lt 10 ]; }; then
+    fail "Python 3.10 or newer is required; found ${python_version}."
+    missing=1
+  else
+    ok "Python ${python_version} is supported"
+  fi
+fi
+
 if [ "$missing" -ne 0 ]; then
   fail "Install the missing prerequisites and run setup again."
   exit 1
@@ -109,6 +121,10 @@ ok "HexStrike backend configured at $HEXSTRIKE_URL"
 info "Creating project directories..."
 mkdir -p output wordlists templates/nuclei/custom
 ok "Project directories ready"
+
+info "Initializing or migrating the RedCode database..."
+python3 scripts/redcode_control.py db migrate
+ok "RedCode database schema ready"
 
 clone_if_missing() {
   local url="$1"
@@ -206,7 +222,8 @@ if [ "$HEXSTRIKE_MODE" = "local" ]; then
 else
   echo "1. Make sure the LAN HexStrike backend remains reachable at $HEXSTRIKE_URL"
 fi
-echo "2. Start RedCode from this directory: ./redcode"
-echo "3. Verify MCP status: ./redcode mcp list"
+echo "2. Create an engagement manifest: ./redcode engagement init --name NAME --scope TARGET"
+echo "3. Check runtime readiness: ./redcode doctor"
+echo "4. Start RedCode from this directory: ./redcode"
 echo ""
 echo "For the full security toolset, run install-tools.sh separately on the machine hosting HexStrike."

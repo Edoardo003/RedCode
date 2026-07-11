@@ -1,0 +1,655 @@
+#!/usr/bin/env python3
+"""Local control-plane utilities for RedCode."""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import fnmatch
+import ipaddress
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import sqlite3
+import subprocess
+import sys
+from typing import Any
+from urllib.error import URLError
+from urllib.parse import urlparse
+from urllib.request import urlopen
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCHEMA_VERSION = 2
+MANIFEST_VERSION = 1
+ACTIONS = {
+    "recon",
+    "osint",
+    "scan",
+    "exploit",
+    "socialeng",
+    "templates",
+    "report",
+    "ctf",
+}
+ASSESSMENT_ACTIONS = [
+    "recon",
+    "osint",
+    "scan",
+    "exploit",
+    "socialeng",
+    "templates",
+    "report",
+]
+CAPABILITY_PROFILES = {
+    "recon": ["nmap", "amass", "subfinder", "httpx"],
+    "web": ["nuclei", "nikto", "ffuf", "gobuster", "sqlmap", "dalfox"],
+    "exploitation": ["sqlmap", "hydra", "commix", "msfconsole", "searchsploit"],
+    "ctf-pwn": ["gdb", "checksec", "pwntools", "ropper"],
+    "ctf-rev": ["file", "strings", "radare2", "ghidra", "angr"],
+    "ctf-forensics": ["file", "binwalk", "exiftool", "foremost", "volatility3"],
+}
+
+
+def load_dotenv(path: Path) -> None:
+    if not path.is_file():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def project_path(value: str | None, default: str) -> Path:
+    path = Path(value or default).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
+def database_path(explicit: str | None = None) -> Path:
+    return project_path(explicit or os.environ.get("REDCODE_DB"), "redcode.db")
+
+
+def manifest_path(explicit: str | None = None) -> Path:
+    return project_path(
+        explicit or os.environ.get("REDCODE_ENGAGEMENT"), "engagement.json"
+    )
+
+
+def validate_manifest(data: Any) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(data, dict):
+        return ["manifest root must be a JSON object"]
+
+    required = {
+        "schema_version",
+        "name",
+        "workflow",
+        "mode",
+        "in_scope",
+        "out_of_scope",
+        "allowed_actions",
+    }
+    missing = sorted(required - set(data))
+    if missing:
+        errors.append(f"missing required fields: {', '.join(missing)}")
+
+    if data.get("schema_version") != MANIFEST_VERSION:
+        errors.append(f"schema_version must be {MANIFEST_VERSION}")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", str(data.get("name", ""))):
+        errors.append("name must be a filesystem-safe identifier")
+    if data.get("workflow") not in {"assessment", "ctf"}:
+        errors.append("workflow must be assessment or ctf")
+    if data.get("mode") not in {"normal", "aggressive"}:
+        errors.append("mode must be normal or aggressive")
+    if data.get("workflow") == "ctf" and data.get("mode") == "aggressive":
+        errors.append("CTF manifests must use normal mode")
+
+    for field in ("in_scope", "out_of_scope", "allowed_actions"):
+        value = data.get(field)
+        if not isinstance(value, list) or any(
+            not isinstance(item, str) or not item.strip() for item in value
+        ):
+            errors.append(f"{field} must be a list of non-empty strings")
+
+    in_scope = data.get("in_scope", [])
+    if isinstance(in_scope, list) and not in_scope:
+        errors.append("in_scope must contain at least one rule")
+
+    allowed = data.get("allowed_actions", [])
+    if isinstance(allowed, list):
+        unknown = sorted(set(allowed) - ACTIONS)
+        if unknown:
+            errors.append(f"unknown allowed_actions: {', '.join(unknown)}")
+        if data.get("workflow") == "ctf" and any(action != "ctf" for action in allowed):
+            errors.append("CTF manifests may only allow the ctf action")
+        if data.get("workflow") == "assessment" and "ctf" in allowed:
+            errors.append("assessment manifests may not allow the ctf action")
+
+    rate = data.get("rate_limit_per_second")
+    if rate is not None and (not isinstance(rate, int) or rate < 1):
+        errors.append("rate_limit_per_second must be a positive integer")
+    return errors
+
+
+def read_manifest(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ValueError(f"engagement manifest not found: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON in {path}: {exc}") from exc
+    errors = validate_manifest(data)
+    if errors:
+        raise ValueError("; ".join(errors))
+    return data
+
+
+def target_parts(target: str) -> tuple[str, str | None, int | None, str]:
+    candidate = target.strip()
+    parsed = urlparse(candidate if "://" in candidate else f"//{candidate}")
+    host = (parsed.hostname or candidate).lower().rstrip(".")
+    return host, parsed.scheme or None, parsed.port, parsed.path or "/"
+
+
+def rule_matches(rule: str, target: str) -> bool:
+    rule = rule.strip()
+    host, scheme, port, path = target_parts(target)
+
+    if "://" in rule:
+        parsed_rule = urlparse(rule)
+        if scheme != parsed_rule.scheme.lower():
+            return False
+        if host != (parsed_rule.hostname or "").lower().rstrip("."):
+            return False
+        if port != parsed_rule.port:
+            return False
+        rule_path = parsed_rule.path or "/"
+        return path == rule_path or path.startswith(rule_path.rstrip("/") + "/")
+
+    try:
+        network = ipaddress.ip_network(rule, strict=False)
+        return ipaddress.ip_address(host) in network
+    except ValueError:
+        pass
+
+    normalized = rule.lower().rstrip(".")
+    if "*" in normalized or "?" in normalized:
+        return fnmatch.fnmatchcase(host, normalized)
+    return host == normalized
+
+
+def scope_decision(manifest: dict[str, Any], target: str, action: str) -> tuple[bool, str]:
+    if action not in ACTIONS:
+        return False, f"unknown action: {action}"
+    if action not in manifest["allowed_actions"]:
+        return False, f"action {action} is not allowed by the engagement manifest"
+    if any(rule_matches(rule, target) for rule in manifest["out_of_scope"]):
+        return False, f"target {target} matches an out-of-scope rule"
+    if not any(rule_matches(rule, target) for rule in manifest["in_scope"]):
+        return False, f"target {target} does not match an in-scope rule"
+    return True, f"{action} is allowed for {target}"
+
+
+def table_names(connection: sqlite3.Connection) -> set[str]:
+    rows = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table'"
+    ).fetchall()
+    return {row[0] for row in rows}
+
+
+def table_columns(connection: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+
+
+def apply_schema(connection: sqlite3.Connection) -> None:
+    connection.executescript((ROOT / "schema.sql").read_text(encoding="utf-8"))
+
+
+def backup_database(connection: sqlite3.Connection, path: Path) -> Path:
+    stamp = dt.datetime.now().strftime("%Y%m%d%H%M%S")
+    backup_path = path.with_name(f"{path.name}.v1-backup-{stamp}")
+    backup_connection = sqlite3.connect(backup_path)
+    try:
+        connection.backup(backup_connection)
+    finally:
+        backup_connection.close()
+    if os.name != "nt":
+        backup_path.chmod(0o600)
+    return backup_path
+
+
+def migrate_database(path: Path, backup: bool = True) -> tuple[int, Path | None]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    backup_path: Path | None = None
+
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        tables = table_names(connection)
+        if "targets" not in tables:
+            apply_schema(connection)
+            connection.commit()
+            return SCHEMA_VERSION, backup_path
+
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        scan_columns = table_columns(connection, "scans")
+        if {"phase", "subdomain", "engagement_id", "asset_id"} <= scan_columns:
+            required_tables = {
+                "schema_migrations",
+                "engagements",
+                "assets",
+                "approvals",
+                "evidence",
+                "finding_relations",
+            }
+            if version == SCHEMA_VERSION and required_tables <= tables:
+                return SCHEMA_VERSION, None
+            if backup:
+                backup_path = backup_database(connection, path)
+            apply_schema(connection)
+            connection.commit()
+            return SCHEMA_VERSION, backup_path
+
+        if version not in {0, 1}:
+            raise RuntimeError(f"unsupported database schema version: {version}")
+
+        if backup:
+            backup_path = backup_database(connection, path)
+        migration = (ROOT / "migrations" / "002_control_plane.sql").read_text(
+            encoding="utf-8"
+        )
+        script = f"""
+BEGIN IMMEDIATE;
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  applied_at TEXT DEFAULT (datetime('now'))
+);
+INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (1, 'initial');
+{migration}
+INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (2, 'control_plane');
+PRAGMA user_version = 2;
+COMMIT;
+"""
+        connection.executescript(script)
+        return SCHEMA_VERSION, backup_path
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+        if path.exists() and os.name != "nt":
+            path.chmod(0o600)
+
+
+class Doctor:
+    def __init__(self) -> None:
+        self.errors = 0
+        self.warnings = 0
+
+    def ok(self, message: str) -> None:
+        print(f"[OK]   {message}")
+
+    def warn(self, message: str) -> None:
+        self.warnings += 1
+        print(f"[WARN] {message}")
+
+    def fail(self, message: str) -> None:
+        self.errors += 1
+        print(f"[FAIL] {message}")
+
+    def check_commands(self) -> None:
+        for name in ("opencode", "git", "python3", "pip3", "node", "npx", "curl"):
+            location = shutil.which(name)
+            if location:
+                self.ok(f"{name}: {location}")
+            else:
+                self.fail(f"required command not found: {name}")
+
+        node = shutil.which("node")
+        if node:
+            result = subprocess.run(
+                [node, "--version"], capture_output=True, text=True, check=False
+            )
+            match = re.search(r"v(\d+)", result.stdout)
+            if match and int(match.group(1)) >= 22:
+                self.ok(f"Node.js version: {result.stdout.strip()}")
+            else:
+                self.fail("Node.js 22 or newer is required")
+
+        if sys.version_info >= (3, 10):
+            self.ok(f"Python version: {sys.version.split()[0]}")
+        else:
+            self.fail("Python 3.10 or newer is required")
+
+    def check_paths(self) -> None:
+        for relative in (
+            "opencode.jsonc",
+            ".opencode/agent",
+            ".opencode/skills",
+            "schema.sql",
+            "templates",
+        ):
+            path = ROOT / relative
+            if path.exists():
+                self.ok(f"project path: {relative}")
+            else:
+                self.fail(f"missing project path: {relative}")
+
+    def check_manifest(self, path: Path) -> None:
+        if not path.exists():
+            self.warn(
+                f"engagement manifest not found: {path}; create one with "
+                "./redcode engagement init --name NAME --scope TARGET"
+            )
+            return
+        try:
+            manifest = read_manifest(path)
+        except ValueError as exc:
+            self.fail(str(exc))
+            return
+        self.ok(
+            f"engagement: {manifest['name']} "
+            f"({manifest['workflow']}, {manifest['mode']})"
+        )
+        self.ok(f"in-scope rules: {len(manifest['in_scope'])}")
+        if os.name != "nt" and path.stat().st_mode & 0o077:
+            self.warn(f"engagement manifest is readable by other users: {path}")
+
+    def check_database(self, path: Path) -> None:
+        if not path.exists():
+            self.warn(f"database not found: {path}; run ./redcode db migrate")
+            return
+        try:
+            connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            tables = table_names(connection)
+            columns = table_columns(connection, "scans") if "scans" in tables else set()
+            connection.close()
+        except sqlite3.Error as exc:
+            self.fail(f"database check failed: {exc}")
+            return
+
+        if version == SCHEMA_VERSION:
+            self.ok(f"database schema version: {version}")
+        else:
+            self.fail(
+                f"database schema version is {version}; run ./redcode db migrate"
+            )
+        required_tables = {"engagements", "assets", "approvals", "evidence"}
+        missing_tables = sorted(required_tables - tables)
+        if missing_tables:
+            self.fail(f"missing database tables: {', '.join(missing_tables)}")
+        missing_columns = sorted({"phase", "subdomain"} - columns)
+        if missing_columns:
+            self.fail(f"scans table missing columns: {', '.join(missing_columns)}")
+        if os.name != "nt" and path.stat().st_mode & 0o077:
+            self.warn(f"database is readable by other users: {path}")
+
+    def check_hexstrike(self, url: str) -> None:
+        health_url = f"{url.rstrip('/')}/health"
+        try:
+            with urlopen(health_url, timeout=5) as response:
+                data = json.load(response)
+        except (URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+            self.fail(f"HexStrike health check failed at {health_url}: {exc}")
+            return
+
+        if data.get("status") == "healthy":
+            self.ok(f"HexStrike {data.get('version', 'unknown')} is healthy")
+        else:
+            self.fail(f"HexStrike status: {data.get('status', 'unknown')}")
+
+        available = data.get("total_tools_available")
+        total = data.get("total_tools_count")
+        if isinstance(available, int) and isinstance(total, int):
+            message = f"host tools available: {available}/{total}"
+            if available == total:
+                self.ok(message)
+            else:
+                self.warn(message)
+
+        statuses = data.get("tools_status", {})
+        if isinstance(statuses, dict):
+            for profile, tools in CAPABILITY_PROFILES.items():
+                present = [tool for tool in tools if statuses.get(tool) is True]
+                missing = [tool for tool in tools if statuses.get(tool) is not True]
+                if missing:
+                    self.warn(
+                        f"capability {profile}: {len(present)}/{len(tools)}; "
+                        f"missing {', '.join(missing)}"
+                    )
+                else:
+                    self.ok(f"capability {profile}: {len(present)}/{len(tools)}")
+
+    def check_mcp(self) -> None:
+        opencode = shutil.which("opencode")
+        if not opencode:
+            return
+        try:
+            result = subprocess.run(
+                [opencode, "mcp", "list"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=45,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            self.fail("OpenCode MCP check timed out")
+            return
+        output = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout + result.stderr)
+        if result.returncode != 0:
+            self.fail(f"OpenCode MCP check failed with exit code {result.returncode}")
+            return
+        lowered = output.lower()
+        if "failed" in lowered or "disconnected" in lowered:
+            self.fail("one or more OpenCode MCP servers are disconnected")
+        else:
+            self.ok("OpenCode MCP list completed without disconnected servers")
+
+    def summary(self) -> int:
+        print()
+        print(f"Doctor summary: {self.errors} error(s), {self.warnings} warning(s)")
+        return 1 if self.errors else 0
+
+
+def command_doctor(args: argparse.Namespace) -> int:
+    doctor = Doctor()
+    print("RedCode doctor")
+    print()
+    doctor.check_commands()
+    doctor.check_paths()
+    doctor.check_manifest(manifest_path(args.manifest))
+    doctor.check_database(database_path(args.db))
+    doctor.check_hexstrike(os.environ.get("HEXSTRIKE_URL", "http://127.0.0.1:8888"))
+    if not args.skip_mcp:
+        doctor.check_mcp()
+    return doctor.summary()
+
+
+def command_db_migrate(args: argparse.Namespace) -> int:
+    path = database_path(args.db)
+    try:
+        version, backup = migrate_database(path, backup=not args.no_backup)
+    except (OSError, sqlite3.Error, RuntimeError) as exc:
+        print(f"Database migration failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"Database ready at schema version {version}: {path}")
+    if backup:
+        print(f"Backup created: {backup}")
+    return 0
+
+
+def command_engagement_init(args: argparse.Namespace) -> int:
+    path = manifest_path(args.file)
+    if path.exists() and not args.force:
+        print(f"Manifest already exists: {path}; use --force to replace it", file=sys.stderr)
+        return 1
+    actions = args.allow or (["ctf"] if args.workflow == "ctf" else ASSESSMENT_ACTIONS)
+    data = {
+        "schema_version": MANIFEST_VERSION,
+        "name": args.name,
+        "workflow": args.workflow,
+        "mode": args.mode,
+        "in_scope": args.scope,
+        "out_of_scope": args.out_of_scope or [],
+        "allowed_actions": actions,
+        "rate_limit_per_second": args.rate_limit,
+        "notes": args.notes or "",
+    }
+    errors = validate_manifest(data)
+    if errors:
+        for error in errors:
+            print(f"Manifest error: {error}", file=sys.stderr)
+        return 1
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    if os.name != "nt":
+        path.chmod(0o600)
+    print(f"Engagement manifest created: {path}")
+    activate_manifest(path, data, quiet=True)
+
+    db = database_path(args.db)
+    if db.exists():
+        try:
+            connection = sqlite3.connect(db)
+            connection.execute(
+                "INSERT INTO engagements "
+                "(engagement_key, name, workflow, mode, manifest_path) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(engagement_key) DO UPDATE SET "
+                "name=excluded.name, workflow=excluded.workflow, "
+                "mode=excluded.mode, manifest_path=excluded.manifest_path, "
+                "updated_at=datetime('now')",
+                (args.name, args.name, args.workflow, args.mode, str(path)),
+            )
+            connection.commit()
+            connection.close()
+            print(f"Engagement registered in: {db}")
+        except sqlite3.Error as exc:
+            print(f"Warning: engagement was not registered in SQLite: {exc}")
+    return 0
+
+
+def activate_manifest(path: Path, data: dict[str, Any], quiet: bool = False) -> Path:
+    context_path = ROOT / "output" / ".redcode" / "current-engagement.json"
+    context_path.parent.mkdir(parents=True, exist_ok=True)
+    context = dict(data)
+    context["manifest_path"] = str(path)
+    context["activated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    context_path.write_text(json.dumps(context, indent=2) + "\n", encoding="utf-8")
+    if os.name != "nt":
+        context_path.chmod(0o600)
+    if not quiet:
+        print(f"Engagement activated for OpenCode: {context_path}")
+    return context_path
+
+
+def command_engagement_validate(args: argparse.Namespace) -> int:
+    path = manifest_path(args.file)
+    try:
+        data = read_manifest(path)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(
+        f"Valid engagement: {data['name']} "
+        f"({data['workflow']}, {data['mode']}, {len(data['in_scope'])} scope rule(s))"
+    )
+    return 0
+
+
+def command_engagement_activate(args: argparse.Namespace) -> int:
+    path = manifest_path(args.file)
+    try:
+        data = read_manifest(path)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    activate_manifest(path, data, quiet=args.quiet)
+    return 0
+
+
+def command_scope_check(args: argparse.Namespace) -> int:
+    try:
+        data = read_manifest(manifest_path(args.file))
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    allowed, reason = scope_decision(data, args.target, args.action)
+    print(("ALLOW: " if allowed else "DENY: ") + reason)
+    return 0 if allowed else 1
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="redcode", description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    doctor = subparsers.add_parser("doctor", help="check local runtime readiness")
+    doctor.add_argument("--db")
+    doctor.add_argument("--manifest")
+    doctor.add_argument("--skip-mcp", action="store_true")
+    doctor.set_defaults(func=command_doctor)
+
+    db = subparsers.add_parser("db", help="manage the RedCode database")
+    db_subparsers = db.add_subparsers(dest="db_command", required=True)
+    migrate = db_subparsers.add_parser("migrate", help="upgrade the database schema")
+    migrate.add_argument("--db")
+    migrate.add_argument("--no-backup", action="store_true")
+    migrate.set_defaults(func=command_db_migrate)
+
+    engagement = subparsers.add_parser("engagement", help="manage engagement manifests")
+    engagement_subparsers = engagement.add_subparsers(
+        dest="engagement_command", required=True
+    )
+    init = engagement_subparsers.add_parser("init", help="create an engagement manifest")
+    init.add_argument("--name", required=True)
+    init.add_argument("--workflow", choices=("assessment", "ctf"), default="assessment")
+    init.add_argument("--mode", choices=("normal", "aggressive"), default="normal")
+    init.add_argument("--scope", action="append", required=True)
+    init.add_argument("--out-of-scope", action="append")
+    init.add_argument("--allow", action="append", choices=sorted(ACTIONS))
+    init.add_argument("--rate-limit", type=int, default=10)
+    init.add_argument("--notes")
+    init.add_argument("--file")
+    init.add_argument("--db")
+    init.add_argument("--force", action="store_true")
+    init.set_defaults(func=command_engagement_init)
+
+    validate = engagement_subparsers.add_parser(
+        "validate", help="validate an engagement manifest"
+    )
+    validate.add_argument("--file")
+    validate.set_defaults(func=command_engagement_validate)
+
+    activate = engagement_subparsers.add_parser(
+        "activate", help="validate and expose the manifest to OpenCode"
+    )
+    activate.add_argument("--file")
+    activate.add_argument("--quiet", action="store_true")
+    activate.set_defaults(func=command_engagement_activate)
+
+    scope = subparsers.add_parser("scope", help="check target and action against a manifest")
+    scope_subparsers = scope.add_subparsers(dest="scope_command", required=True)
+    check = scope_subparsers.add_parser("check", help="return ALLOW or DENY")
+    check.add_argument("target")
+    check.add_argument("action", choices=sorted(ACTIONS))
+    check.add_argument("--file")
+    check.set_defaults(func=command_scope_check)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    load_dotenv(ROOT / ".env")
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

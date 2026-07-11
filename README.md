@@ -14,6 +14,7 @@ It coordinates specialized agents, connects security tools through MCP, and keep
 - Separates assessment data from CTF artifacts, solver code, checkpoints, and write-ups.
 - Supports a local HexStrike backend or a backend hosted on a trusted local network.
 - Provides report templates for generic assessments, HackerOne, and Bugcrowd formats.
+- Adds local runtime diagnostics, versioned database migrations, and engagement scope preflight.
 
 ## Why RedCode?
 
@@ -54,11 +55,24 @@ git clone https://github.com/Edoardo003/RedCode.git
 cd RedCode
 chmod +x setup.sh redcode install-tools.sh
 ./setup.sh
-./redcode mcp list
+./redcode engagement init --name local-lab --workflow ctf --scope http://127.0.0.1:3000
+./redcode doctor
 ./redcode
 ```
 
-`setup.sh` is interactive. It creates `.env`, clones HexStrike and the configured wordlist repositories, installs MCP dependencies, installs Playwright Chromium, and asks whether HexStrike runs locally or on a trusted LAN host. In local mode it can install a `systemd` service when run as root.
+`setup.sh` is interactive. It creates `.env`, initializes or migrates SQLite, clones HexStrike and the configured wordlist repositories, installs MCP dependencies, installs Playwright Chromium, and asks whether HexStrike runs locally or on a trusted LAN host. In local mode it can install a `systemd` service when run as root.
+
+Use an assessment manifest instead when testing an authorized target:
+
+```bash
+./redcode engagement init \
+  --name example-assessment \
+  --workflow assessment \
+  --scope example.test \
+  --scope '*.example.test'
+```
+
+See [`docs/control-plane.md`](docs/control-plane.md) for manifest fields, scope matching, database migration, and doctor behavior.
 
 The large optional tool installer is separate:
 
@@ -70,7 +84,16 @@ sudo ./install-tools.sh
 
 ## Example Workflow
 
-The commands below are entered inside OpenCode:
+Create and validate the engagement before opening OpenCode:
+
+```bash
+./redcode engagement init --name example-assessment --scope app.example.test
+./redcode scope check app.example.test recon
+./redcode doctor
+./redcode
+```
+
+Then enter the assessment commands inside OpenCode:
 
 ```text
 /target app.example.test
@@ -118,6 +141,8 @@ Assessment agents are instructed to exchange `findings.json` files and persist c
 
 JSON remains the richer evidence handoff. SQLite stores normalized target, finding, scan, and credential records, but does not contain every JSON field. Persistence is agent-driven and must be checked by the analyst; it is not transactionally enforced by the launcher.
 
+Schema version 2 also tracks engagements, assets, approvals, tool-run phase and subdomain, evidence metadata, and relationships between findings. `./redcode db migrate` upgrades an existing database after creating a timestamped backup.
+
 ## Optional Integrations
 
 ### HexStrike Deployment
@@ -159,13 +184,13 @@ Custom Nuclei templates are generated under `templates/nuclei/custom/`, which is
 
 RedCode is a personal, experimental security workspace, not a production-ready platform.
 
-- **Implemented core:** OpenCode agent and command definitions, MCP configuration, local/LAN HexStrike setup, launcher environment handling, report templates, structured assessment handoff, and isolated CTF workspaces.
+- **Implemented core:** OpenCode agent and command definitions, MCP configuration, local/LAN HexStrike setup, launcher environment handling, runtime doctor, schema migrations, engagement manifests, scope preflight, report templates, structured assessment handoff, and isolated CTF workspaces.
 - **Experimental:** full-chain orchestration, aggressive mode, checkpoint/resume behavior, social-engineering artifact generation, generated Nuclei templates, and CTF categories beyond the locally exercised web workflow.
 - **Optional:** the large security-tool installer, Burp MCP, proxy configuration, LAN-hosted HexStrike, and downloaded wordlists.
-- **Known limitation:** resume-related prompts reference `phase` and `subdomain` fields that are not currently present in the `scans` table. SQLite-assisted resume should not be treated as reliable until the schema and prompts are aligned.
-- There is no automated test suite, CI workflow, release process, supported-platform matrix, or pinned HexStrike revision.
+- **Known limitation:** scope preflight is deterministic but does not physically intercept every HexStrike request; a policy gateway would be required for complete technical enforcement.
+- There is a focused control-plane test suite, but no CI workflow, release process, broad integration suite, supported-platform matrix, or pinned HexStrike revision.
 - MCP packages invoked through `npx ...@latest` and OpenCode Go model availability may change independently of this repository.
-- No license file is currently included.
+- The project is licensed under the [MIT License](LICENSE).
 
 See [`DOCS_REVIEW.md`](DOCS_REVIEW.md) for the documentation audit and prioritized follow-up work.
 
@@ -174,12 +199,12 @@ See [`DOCS_REVIEW.md`](DOCS_REVIEW.md) for the documentation audit and prioritiz
 ## Requirements
 
 - OpenCode installed and authenticated for the account running RedCode.
-- Linux with Bash, Git, `curl`, Python 3 with `pip3`, and Node.js 22 or newer with `npx`.
+- Linux with Bash, Git, `curl`, Python 3.10 or newer with `pip3`, and Node.js 22 or newer with `npx`.
 - Network access during setup to clone repositories and install Python, Node, browser, and wordlist dependencies.
 - Root access for the optional `systemd` service and `install-tools.sh`. Python package installation may also require an appropriate virtual environment or package-manager policy on the host.
 - An OpenCode provider plan that can access the model identifiers configured in [`opencode.jsonc`](opencode.jsonc).
 
-`setup.sh` checks command availability and enforces Node.js 22+, but it does not currently enforce a Python version or detect a supported Linux distribution.
+`setup.sh` enforces Python 3.10+ and Node.js 22+. The confirmed development runtime is Ubuntu 24.04.4 LTS x86_64 with a Proxmox `6.17.2-1-pve` kernel, Python 3.12.3, Node.js 24.18.0, OpenCode 1.3.17, and HexStrike 6.0.0. This is a tested environment, not a general support matrix.
 
 ## Legal Use
 
@@ -189,8 +214,10 @@ Use RedCode only under explicit authorization and documented scope. Respect rule
 
 - [`AGENTS.md`](AGENTS.md): repository instructions, safety boundaries, agents, and the assessment handoff contract.
 - [`DOCS_REVIEW.md`](DOCS_REVIEW.md): audit findings, unresolved gaps, and recommended next steps.
+- [`docs/control-plane.md`](docs/control-plane.md): doctor, migrations, engagement manifests, and scope preflight.
 - [`opencode.jsonc`](opencode.jsonc): MCP and model configuration.
 - [`.opencode/agent/`](.opencode/agent/): specialized agent prompts.
 - [`.opencode/skills/`](.opencode/skills/): assessment, CTF, and HexStrike tool guidance.
 - [`schema.sql`](schema.sql): SQLite schema.
 - [`templates/`](templates/): report templates.
+- [`LICENSE`](LICENSE): MIT license terms.

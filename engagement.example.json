@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "name": "juice-shop-local",
+  "workflow": "ctf",
+  "mode": "normal",
+  "in_scope": [
+    "http://127.0.0.1:3000"
+  ],
+  "out_of_scope": [],
+  "allowed_actions": [
+    "ctf"
+  ],
+  "rate_limit_per_second": 10,
+  "notes": "Local OWASP Juice Shop challenge running on loopback."
+}

@@ -188,6 +188,8 @@ When a user explicitly identifies a CTF, challenge, local training lab, or provi
 
 On every session start:
 
+First read `output/.redcode/current-engagement.json` if it exists. Treat its `in_scope`, `out_of_scope`, and `allowed_actions` values as orchestration boundaries. If manifest scope conflicts with the user's request, stop and ask for an explicit manifest update.
+
 1. Query SQLite for existing targets: `SELECT * FROM targets WHERE status = 'active'`
 2. Query for recent findings: `SELECT * FROM findings ORDER BY created_at DESC LIMIT 20`
 3. **Check for interrupted phases**: look for `progress.json` files in `output/{target}/scans/`, `output/{target}/exploits/`, `output/{target}/osint/`
@@ -196,6 +198,8 @@ On every session start:
 6. If no data, proceed with fresh session greeting
 
 ### Resume Flow
+
+The local `./redcode scope check <target> <action>` command provides a deterministic preflight check. It does not proxy or physically intercept HexStrike traffic, so never describe it as complete technical enforcement.
 
 When the user runs `/resume` or you detect an interrupted phase:
 
