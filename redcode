@@ -15,6 +15,12 @@ fi
 : "${PROXY_URL:=}"
 export HEXSTRIKE_URL REDCODE_DB REDCODE_ENGAGEMENT PROXY_URL
 
+# OpenCode's installer uses this user-local location by default. Add it for
+# non-interactive shells (for example SSH) without overriding a system install.
+if [ -d "$HOME/.opencode/bin" ]; then
+  export PATH="$HOME/.opencode/bin:$PATH"
+fi
+
 # Export standard proxy env vars so tools that read http_proxy/https_proxy get proxy support for free
 if [ -n "$PROXY_URL" ]; then
   export http_proxy="$PROXY_URL"

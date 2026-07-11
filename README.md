@@ -97,6 +97,8 @@ OpenCode's own usage report is available through the launcher:
 
 These reports expose token, cost, model, and tool usage rather than imposing a fixed budget. Automatic compaction and stale tool-output pruning are enabled in [`opencode.jsonc`](opencode.jsonc). Existing per-agent iteration limits are unchanged.
 
+The main operational prompts are intentionally role-focused and defer detailed tool parameters to on-demand skills. This reduces duplicated static instructions, but the effect on total usage depends on the selected model, enabled MCP schemas, tool output, and session length; compare new sessions with `./redcode stats` rather than assuming a fixed saving.
+
 ## Example Workflow
 
 Create and validate the engagement before opening OpenCode:
