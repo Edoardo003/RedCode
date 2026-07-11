@@ -14,7 +14,7 @@ Do not describe generated output as verified merely because a tool or language m
 - `.opencode/agent/`: tracked agent prompts.
 - `.opencode/command/`: tracked slash-command prompts.
 - `.opencode/skills/`: assessment, CTF, and HexStrike guidance loaded by agents.
-- `setup.sh`: interactive project and MCP setup.
+- `setup.sh`: interactive project and MCP setup using a project-local `.venv`.
 - `install-tools.sh`: optional APT-based installer with explicit capability profiles.
 - `redcode`: Bash launcher that loads `.env` and starts OpenCode.
 - `scripts/redcode_control.py`: doctor, migrations, engagement manifests, and scope preflight.

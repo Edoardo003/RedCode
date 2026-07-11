@@ -50,7 +50,6 @@ missing=0
 require_command opencode "Install it from https://opencode.ai/docs/."
 require_command git "Install Git with your system package manager."
 require_command python3 "Install Python 3.10 or newer."
-require_command pip3 "Install pip for Python 3."
 require_command node "Install Node.js 22 LTS or newer."
 require_command npx "Install Node.js 22 LTS or newer."
 require_command curl "Install curl with your system package manager."
@@ -81,6 +80,20 @@ if [ "$missing" -ne 0 ]; then
   fail "Install the missing prerequisites and run setup again."
   exit 1
 fi
+
+VENV_DIR="$PROJECT_DIR/.venv"
+if [ ! -x "$VENV_DIR/bin/python" ]; then
+  info "Creating the local Python environment..."
+  if ! python3 -m venv "$VENV_DIR"; then
+    fail "Could not create .venv. Install the python3-venv package and run setup again."
+    exit 1
+  fi
+  ok "Local Python environment created"
+else
+  ok "Local Python environment already present"
+fi
+VENV_PYTHON="$VENV_DIR/bin/python"
+export PATH="$VENV_DIR/bin:$PATH"
 
 if [ ! -f .env ]; then
   cp .env.example .env
@@ -127,7 +140,7 @@ mkdir -p output wordlists templates/nuclei/custom
 ok "Project directories ready"
 
 info "Initializing or migrating the RedCode database..."
-python3 scripts/redcode_control.py db migrate
+"$VENV_PYTHON" scripts/redcode_control.py db migrate
 ok "RedCode database schema ready"
 
 clone_if_missing() {
@@ -148,7 +161,7 @@ clone_if_missing https://github.com/danielmiessler/SecLists.git wordlists/SecLis
 clone_if_missing https://github.com/swisskyrepo/PayloadsAllTheThings.git wordlists/PayloadsAllTheThings
 
 info "Installing HexStrike bridge dependencies..."
-pip3 install -r hexstrike-ai/requirements.txt
+"$VENV_PYTHON" -m pip install -r hexstrike-ai/requirements.txt
 ok "HexStrike dependencies installed"
 
 if [ "$HEXSTRIKE_MODE" = "local" ]; then
@@ -164,7 +177,7 @@ if [ "$HEXSTRIKE_MODE" = "local" ]; then
     elif ! command -v systemctl &>/dev/null; then
       warn "systemd is not available; start HexStrike manually."
     else
-      python_bin="$(command -v python3)"
+      python_bin="$VENV_PYTHON"
       service_file="/etc/systemd/system/redcode-hexstrike.service"
 
       {
@@ -193,7 +206,7 @@ if [ "$HEXSTRIKE_MODE" = "local" ]; then
 fi
 
 info "Installing local Python MCP servers..."
-pip3 install mcp-server-fetch mcp-server-sqlite
+"$VENV_PYTHON" -m pip install mcp-server-fetch mcp-server-sqlite
 ok "Python MCP servers installed"
 
 info "Preparing local Node MCP servers..."
@@ -208,7 +221,7 @@ if curl -fsS --connect-timeout 5 "${HEXSTRIKE_URL}/health" &>/dev/null; then
   ok "HexStrike is reachable at $HEXSTRIKE_URL"
 elif [ "$HEXSTRIKE_MODE" = "local" ]; then
   warn "HexStrike is installed but not running yet."
-  warn "Start it with: cd hexstrike-ai && python3 hexstrike_server.py --port 8888"
+  warn "Start it with: .venv/bin/python hexstrike-ai/hexstrike_server.py --port 8888"
 else
   warn "The LAN backend did not answer at ${HEXSTRIKE_URL}/health."
   warn "Check its bind address, firewall, and that both machines are on the trusted LAN."
@@ -221,7 +234,7 @@ if [ "$HEXSTRIKE_MODE" = "local" ]; then
   if command -v systemctl &>/dev/null && systemctl is-active --quiet redcode-hexstrike.service; then
     echo "1. HexStrike service is active: systemctl status redcode-hexstrike"
   else
-    echo "1. Start HexStrike: cd hexstrike-ai && python3 hexstrike_server.py --port 8888"
+    echo "1. Start HexStrike: .venv/bin/python hexstrike-ai/hexstrike_server.py --port 8888"
   fi
 else
   echo "1. Make sure the LAN HexStrike backend remains reachable at $HEXSTRIKE_URL"

@@ -15,6 +15,12 @@ fi
 : "${PROXY_URL:=}"
 export HEXSTRIKE_URL REDCODE_DB REDCODE_ENGAGEMENT PROXY_URL
 
+# setup.sh installs Python dependencies here. Keeping it on PATH also lets
+# OpenCode resolve the Python-based MCP server executables.
+if [ -d "$DIR/.venv/bin" ]; then
+  export PATH="$DIR/.venv/bin:$PATH"
+fi
+
 # OpenCode's installer uses this user-local location by default. Add it for
 # non-interactive shells (for example SSH) without overriding a system install.
 if [ -d "$HOME/.opencode/bin" ]; then

@@ -42,7 +42,7 @@ Analyst
 
 ## Quick Start
 
-RedCode currently targets a Linux host with Bash. The interactive setup requires Git, Python 3.10+, Node.js 22+, `curl`, and an authenticated OpenCode installation.
+RedCode currently targets a Linux host with Bash. The interactive setup requires Git, Python 3.10+ with the `venv` module, Node.js 22+, `curl`, and an authenticated OpenCode installation.
 
 ```bash
 git clone https://github.com/Edoardo003/RedCode.git
@@ -59,7 +59,7 @@ chmod +x setup.sh redcode install-tools.sh
 ./redcode
 ```
 
-`setup.sh` creates local configuration, initializes SQLite, clones HexStrike and wordlists, installs the configured MCP dependencies, and optionally creates a local `systemd` service. It can instead point the MCP bridge at a HexStrike backend on a trusted LAN.
+`setup.sh` creates local configuration, installs Python dependencies in an ignored project `.venv`, initializes SQLite, clones HexStrike and wordlists, installs the configured MCP dependencies, and optionally creates a local `systemd` service. It can instead point the MCP bridge at a HexStrike backend on a trusted LAN.
 
 `install-tools.sh` is optional. It installs small `core`, `web`, `network`, or `ctf` profiles from the host's configured APT repositories. It does not add third-party repositories or execute remote install scripts.
 

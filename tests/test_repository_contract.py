@@ -96,14 +96,18 @@ class RepositoryContractTests(unittest.TestCase):
         for key, value in theme["theme"].items():
             self.assertEqual(set(value), {"dark", "light"}, key)
 
-    def test_readme_internal_links_resolve(self):
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        links = re.findall(r"\]\(([^)]+)\)", readme)
-        for link in links:
-            target = link.split("#", 1)[0]
-            if not target or "://" in target:
-                continue
-            self.assertTrue((ROOT / target).exists(), link)
+    def test_internal_markdown_links_resolve(self):
+        markdown_files = list(ROOT.glob("*.md"))
+        for directory in ("docs", "examples", ".opencode/agent", ".opencode/command", ".opencode/skills"):
+            markdown_files.extend((ROOT / directory).rglob("*.md"))
+
+        for path in markdown_files:
+            links = re.findall(r"\]\(([^)]+)\)", path.read_text(encoding="utf-8"))
+            for link in links:
+                target = link.split("#", 1)[0]
+                if not target or re.match(r"^[a-z][a-z0-9+.-]*:", target, re.I):
+                    continue
+                self.assertTrue((path.parent / target).resolve().exists(), f"{path}: {link}")
 
     def test_json_contract_files_parse(self):
         for relative in (
@@ -121,6 +125,16 @@ class RepositoryContractTests(unittest.TestCase):
         setup = (ROOT / "setup.sh").read_text(encoding="utf-8")
         self.assertNotIn("@latest", config)
         self.assertNotIn("@latest", setup)
+
+    def test_python_dependencies_use_project_virtualenv(self):
+        setup = (ROOT / "setup.sh").read_text(encoding="utf-8")
+        launcher = (ROOT / "redcode").read_text(encoding="utf-8")
+        gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn('VENV_DIR="$PROJECT_DIR/.venv"', setup)
+        self.assertIn('"$VENV_PYTHON" -m pip install', setup)
+        self.assertNotIn("pip3 install", setup)
+        self.assertIn('$DIR/.venv/bin', launcher)
+        self.assertIn(".venv/", gitignore.splitlines())
 
     def test_tool_installer_has_explicit_profiles(self):
         installer = (ROOT / "install-tools.sh").read_text(encoding="utf-8")

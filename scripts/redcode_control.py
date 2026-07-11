@@ -303,7 +303,7 @@ class Doctor:
         print(f"[FAIL] {message}")
 
     def check_commands(self) -> None:
-        for name in ("opencode", "git", "python3", "pip3", "node", "npx", "curl"):
+        for name in ("opencode", "git", "python3", "node", "npx", "curl"):
             location = shutil.which(name)
             if location:
                 self.ok(f"{name}: {location}")

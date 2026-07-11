@@ -16,6 +16,7 @@ wordlists/
 # Dependencies
 node_modules/
 .npm/
+.venv/
 
 # HexStrike (cloned at setup)
 hexstrike-ai/
