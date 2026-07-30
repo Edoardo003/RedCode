@@ -16,7 +16,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-
 BASE_URL = os.environ.get("REDCODE_JUICE_SHOP_URL", "").rstrip("/")
 
 

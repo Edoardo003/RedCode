@@ -1,10 +1,9 @@
 import importlib.util
 import json
-from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
-
+from pathlib import Path
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "redcode_control.py"
 SPEC = importlib.util.spec_from_file_location("redcode_control", MODULE_PATH)
@@ -82,6 +81,28 @@ class ManifestTests(unittest.TestCase):
             manifest, "http://127.0.0.1:3000/rest/admin", "scan"
         )
         self.assertFalse(denied)
+
+
+class ArsenalRuntimeConfigTests(unittest.TestCase):
+    def test_arsenal_override_disables_direct_network_tools_for_every_agent(self):
+        config = control.arsenal_opencode_override(
+            json.dumps({"share": "disabled", "permission": {"bash": "ask"}})
+        )
+
+        self.assertEqual(config["share"], "disabled")
+        self.assertEqual(config["permission"]["bash"], "deny")
+        self.assertTrue(config["mcp"]["arsenal"]["enabled"])
+        for server in control.ARSENAL_DISABLED_MCP:
+            self.assertFalse(config["mcp"][server]["enabled"])
+        for agent in control.OPENCODE_AGENTS:
+            permissions = config["agent"][agent]["permission"]
+            self.assertEqual(permissions["arsenal_*"], "allow")
+            for tool in control.ARSENAL_DENIED_TOOLS:
+                self.assertEqual(permissions[tool], "deny")
+
+    def test_arsenal_override_rejects_invalid_inline_config(self):
+        with self.assertRaisesRegex(ValueError, "invalid JSON"):
+            control.arsenal_opencode_override("not-json")
 
 
 class DatabaseTests(unittest.TestCase):
@@ -173,6 +194,18 @@ class ManifestFileTests(unittest.TestCase):
                 activated = json.loads(context.read_text(encoding="utf-8"))
                 self.assertEqual(activated["name"], "juice-shop-local")
                 self.assertIn("activated_at", activated)
+        finally:
+            control.ROOT = original_root
+
+    def test_runtime_profile_replaces_stale_mode(self):
+        original_root = control.ROOT
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                control.ROOT = Path(temp_dir)
+                path = control.activate_runtime_mode("arsenal", quiet=True)
+                control.activate_runtime_mode("standalone", quiet=True)
+                runtime = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(runtime["mode"], "standalone")
         finally:
             control.ROOT = original_root
 

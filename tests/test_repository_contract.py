@@ -1,8 +1,7 @@
 import json
-from pathlib import Path
 import re
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -105,7 +104,9 @@ class RepositoryContractTests(unittest.TestCase):
             links = re.findall(r"\]\(([^)]+)\)", path.read_text(encoding="utf-8"))
             for link in links:
                 target = link.split("#", 1)[0]
-                if not target or re.match(r"^[a-z][a-z0-9+.-]*:", target, re.I):
+                if not target or re.match(
+                    r"^[a-z][a-z0-9+.-]*:", target, re.IGNORECASE
+                ):
                     continue
                 self.assertTrue((path.parent / target).resolve().exists(), f"{path}: {link}")
 
@@ -135,6 +136,24 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertNotIn("pip3 install", setup)
         self.assertIn('$DIR/.venv/bin', launcher)
         self.assertIn(".venv/", gitignore.splitlines())
+        self.assertIn('pip install "mcp>=1.6,<3" ', setup)
+
+    def test_arsenal_bridge_is_disabled_until_launcher_handshake(self):
+        arsenal = self.config["mcp"]["arsenal"]
+        self.assertFalse(arsenal["enabled"])
+        self.assertEqual(
+            arsenal["command"], ["python3", "scripts/arsenal_mcp.py"]
+        )
+        self.assertEqual(self.config["permission"]["arsenal_*"], "deny")
+        self.assertTrue((ROOT / "scripts/arsenal_client.py").is_file())
+        self.assertTrue((ROOT / "scripts/arsenal_mcp.py").is_file())
+
+        from scripts import redcode_control as control
+
+        self.assertEqual(
+            control.OPENCODE_AGENTS,
+            set(self.config["agent"]) - {"compaction"},
+        )
 
     def test_tool_installer_has_explicit_profiles(self):
         installer = (ROOT / "install-tools.sh").read_text(encoding="utf-8")
