@@ -1,9 +1,8 @@
 import importlib.util
 import json
-from pathlib import Path
 import tempfile
 import unittest
-
+from pathlib import Path
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "redact_evidence.py"
 ROOT = MODULE_PATH.parents[1]

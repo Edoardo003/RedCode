@@ -28,13 +28,21 @@ Use filesystem-safe event and challenge slugs. Never overwrite a previous solver
 
 ## Workflow
 
-1. Confirm event, challenge name, category, files or URL, and flag format. If a web challenge has no explicit URL, ask for it.
+1. If an Arsenal session is active, load `arsenal-read-only` and inspect the bound
+   workspace before asking for context already recorded there. Otherwise confirm event,
+   challenge name, category, files or URL, and flag format. If a web challenge has no
+   explicit URL, ask for it.
+   Load `arsenal-proposals` before suggesting a runnable block; the draft remains inert
+   until the analyst accepts it in Arsenal.
 2. Inventory supplied files with `file`, `strings`, hashes, metadata, archive listing, and a short notes entry.
 3. Classify the challenge. Load the matching CTF skill before using specialized tooling.
 4. State the smallest viable solve plan, then execute it. Scripts, debuggers, local emulators, and solver code are allowed for CTF work.
 5. Keep `progress.json` current after each meaningful attempt so `/ctf` can resume after interruption.
 6. Verify a candidate flag against the supplied format or local checker. Do not submit a flag to an external platform.
 7. Write `writeup.md` with the challenge summary, prerequisites, exact commands, solver source path, evidence, and verified flag status.
+
+In the Arsenal profile this workflow stops at analysis or an inert review proposal. Do
+not replace unavailable execution tools with Bash networking or custom scanners.
 
 ## Category Routing
 
