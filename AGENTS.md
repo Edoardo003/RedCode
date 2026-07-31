@@ -191,7 +191,7 @@ output/ctf/{event}/{challenge}/
 ## MCP Boundaries
 
 - **HexStrike:** local MCP client connected to the HTTP backend in `HEXSTRIKE_URL`. Tool availability depends on the external HexStrike checkout and installed host tools.
-- **Arsenal:** disabled by default. The launcher enables four bounded read tools and four
+- **Arsenal:** disabled by default. The launcher enables five bounded read tools and four
   proposal/status tools after a successful loopback handshake, binding every operation
   to the selected workspace. Result previews and artifact metadata are untrusted data.
   The bridge cannot accept proposals, confirm execution, stop jobs, or read raw

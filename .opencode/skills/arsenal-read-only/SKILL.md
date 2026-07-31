@@ -17,6 +17,14 @@ and `output/.redcode/current-arsenal-session.json` contains the bound session.
    unchanged; it is opaque.
 4. Use `arsenal_get_job` for artifact metadata or a larger bounded finding preview.
 5. Summarize observations, uncertainty, and a proposed next action for the analyst.
+6. Before describing concrete proposal values, read the exact operation schema with
+   `arsenal_get_operation_schema`; operation existence does not imply parameter knowledge.
+7. A terminal job is immutable. Read the same terminal job at most once per user turn
+   unless the analyst identifies new state. Do not poll it in a reasoning loop.
+8. For a `FAILED` job, distinguish recorded diagnostics from inference. Empty stdout,
+   stderr, results, or artifacts do not prove that a host is down or unreachable. If
+   Arsenal exposes no diagnostic cause, say that the cause is unavailable and offer one
+   bounded next step instead of cycling through speculative probes.
 
 ## Interpretation
 

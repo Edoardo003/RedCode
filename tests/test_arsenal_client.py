@@ -49,6 +49,7 @@ class ArsenalHandler(BaseHTTPRequestHandler):
                     "result.preview.read",
                     "artifact.metadata.read",
                     "execution_provider.list",
+                    "tool.operation.read",
                 ],
                 "limits": {},
                 "trust_policy": {
@@ -106,6 +107,25 @@ class ArsenalHandler(BaseHTTPRequestHandler):
                 "job": {"id": JOB_ID},
                 "artifacts": [],
                 "artifacts_truncated": False,
+            },
+            "/api/agent/v1/operations/nmap.scan": {
+                "protocol_version": "1.0",
+                "id": "nmap.scan",
+                "label": "Network scan",
+                "description": "Bounded scan contract",
+                "version": "1.0",
+                "execution_mode": "long_running",
+                "accepted_resources": ["host", "network"],
+                "parameters": [
+                    {
+                        "id": "targets",
+                        "label": "Targets",
+                        "kind": "text",
+                        "required": True,
+                    }
+                ],
+                "presets": [],
+                "runtime": None,
             },
             f"/api/agent-actions/v1/workspaces/{WORKSPACE_ID}/block-drafts/draft-1": {
                 "id": "draft-1",
@@ -242,6 +262,14 @@ class ArsenalClientTests(unittest.TestCase):
         self.assertEqual(query["cursor"], ["opaque+/="])
         self.assertEqual(ArsenalHandler.requests[1][1], f"/api/agent/v1/workspaces/{WORKSPACE_ID}/jobs/{JOB_ID}")
 
+    def test_operation_schema_exposes_exact_parameter_ids(self):
+        schema = self.client().operation_schema("nmap.scan")
+
+        self.assertEqual(schema["parameters"][0]["id"], "targets")
+        self.assertEqual(
+            ArsenalHandler.requests[0][1], "/api/agent/v1/operations/nmap.scan"
+        )
+
     def test_missing_protocol_header_is_rejected(self):
         ArsenalHandler.protocol_header = None
         with self.assertRaisesRegex(ArsenalClientError, "protocol header"):
@@ -250,6 +278,16 @@ class ArsenalClientTests(unittest.TestCase):
     def test_non_loopback_url_is_rejected(self):
         with self.assertRaisesRegex(ArsenalClientError, "loopback"):
             normalize_arsenal_url("https://arsenal.example.test")
+
+    def test_explicit_remote_url_requires_https(self):
+        with self.assertRaisesRegex(ArsenalClientError, "HTTPS"):
+            normalize_arsenal_url("http://arsenal.example.test", allow_remote=True)
+        self.assertEqual(
+            normalize_arsenal_url(
+                "https://arsenal.example.test", allow_remote=True
+            ),
+            "https://arsenal.example.test",
+        )
 
     def test_path_identifiers_cannot_inject_another_api_route(self):
         with self.assertRaisesRegex(ArsenalClientError, "workspace id"):

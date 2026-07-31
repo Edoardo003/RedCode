@@ -1,6 +1,6 @@
 # Arsenal Integration
 
-> Status: Phases 7E–7F mediated execution and provider provenance implemented
+> Status: Phase 8 embedded chat gateway and mediated execution implemented
 > Protocols: `arsenal-agent-context` 1.0 and `arsenal-agent-actions` 1.0
 
 ## Purpose
@@ -70,7 +70,7 @@ later Standalone launch.
 
 ## MCP Tools
 
-OpenCode receives eight tools from the `arsenal` MCP server:
+OpenCode receives nine tools from the `arsenal` MCP server:
 
 | Tool | Behavior |
 | --- | --- |
@@ -78,6 +78,7 @@ OpenCode receives eight tools from the `arsenal` MCP server:
 | `arsenal_get_workspace_context` | Reads bounded resources, blocks, and recent jobs from the bound workspace. |
 | `arsenal_list_jobs` | Pages through bound-workspace jobs using an opaque cursor. |
 | `arsenal_get_job` | Reads one bound-workspace job, structured previews, and artifact metadata. |
+| `arsenal_get_operation_schema` | Reads exact Tool Contract parameter IDs, constraints, options, presets, and runtime metadata. |
 | `arsenal_propose_block_draft` | Submits a validated, idempotent draft for analyst review. |
 | `arsenal_get_block_draft` | Reads the review state of one bound-workspace draft. |
 | `arsenal_request_block_run` | Requests confirmation for one exact block revision. |
@@ -92,6 +93,70 @@ configurable block; it does not start execution.
 
 Run confirmation is also an Arsenal-only action. RedCode can request a run for one exact
 block revision, but only the analyst can queue the job from Arsenal's Agent Inbox.
+
+Before proposing a block, RedCode must read `arsenal_get_operation_schema` and use only
+the returned parameter IDs. A validation failure permits one schema-based correction;
+after a second failure the agent stops and reports the contract error. This prevents
+loops caused by guessed aliases such as `host`, `target`, `ip`, or `address`.
+
+## Embedded Chat Gateway
+
+Arsenal can host the RedCode conversation directly in its workspace drawer. Start the
+gateway on the RedCode host:
+
+```bash
+./redcode gateway start
+```
+
+The gateway is a small authenticated process in front of `opencode run --format json`.
+It creates one OpenCode provider session per Arsenal chat, relays assistant text as
+NDJSON, exposes only tool name/state activity, and supports cancellation. Conversations,
+message state, and replayable UI events are persisted by Arsenal. Hidden reasoning,
+gateway bearer tokens, MCP payloads, and raw tool output are not relayed to the browser.
+
+The default topology is same-host loopback. For a Kali VM running Arsenal and an Ubuntu
+server running RedCode, use one SSH process from Kali:
+
+```bash
+ssh -N \
+  -L 8765:127.0.0.1:8765 \
+  -R 18000:127.0.0.1:8000 \
+  redcode-user@ubuntu-server
+```
+
+The local forward carries Arsenal-to-gateway traffic; the reverse forward lets the
+gateway call the bounded Arsenal Agent APIs. Copy the two private tokens once, without
+printing them to the terminal:
+
+```bash
+# Kali: copy the gateway credential from Ubuntu and keep it private.
+mkdir -p ~/.local/share/redcode
+scp redcode-user@ubuntu-server:.local/share/redcode/chat-gateway-token \
+  ~/.local/share/redcode/chat-gateway-token
+chmod 600 ~/.local/share/redcode/chat-gateway-token
+
+# Kali: copy Arsenal's agent credential to the path the Ubuntu gateway will read.
+ssh redcode-user@ubuntu-server mkdir -p .local/share/arsenal
+scp ~/.local/share/arsenal/agent-token \
+  redcode-user@ubuntu-server:.local/share/arsenal/agent-token
+ssh redcode-user@ubuntu-server chmod 600 .local/share/arsenal/agent-token
+```
+
+Configure Arsenal's backend `.env` on Kali:
+
+```dotenv
+ARSENAL_REDCODE_GATEWAY_URL=http://127.0.0.1:8765
+ARSENAL_REDCODE_ARSENAL_CALLBACK_URL=http://127.0.0.1:18000
+ARSENAL_REDCODE_ARSENAL_TOKEN_FILE=/home/redcode-user/.local/share/arsenal/agent-token
+```
+
+Restart Arsenal, open a workspace, and select **RedCode**. The OpenCode TUI remains
+optional. If the SSH tunnel or gateway stops, Arsenal preserves the conversation and
+shows the gateway as unavailable.
+
+Direct LAN exposure is not the recommended topology. It requires explicit remote flags,
+TLS certificate/key on the gateway, HTTPS for non-loopback Arsenal origins, and a CA
+file configured in Arsenal. Plain HTTP is accepted only on loopback/tunneled endpoints.
 
 ## Runtime Isolation
 
@@ -129,8 +194,8 @@ The integrated profile does not provide:
 - draft acceptance or run confirmation;
 - job stopping;
 - raw log or artifact content;
-- event streaming;
-- remote Arsenal connections.
+- direct raw MCP payload streaming to the browser;
+- interactive token pairing and coordinated token rotation.
 
 The two-step proposal and execution gate are implemented. Raw artifacts, stop control,
-remote connections, and interactive pairing remain outside this slice.
+interactive pairing and coordinated rotation remain outside this slice.

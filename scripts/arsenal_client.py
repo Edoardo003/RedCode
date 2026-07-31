@@ -30,6 +30,7 @@ REQUIRED_CAPABILITIES = {
     "result.preview.read",
     "artifact.metadata.read",
     "execution_provider.list",
+    "tool.operation.read",
 }
 REQUIRED_ACTION_CAPABILITIES = {
     "block.draft.propose",
@@ -49,15 +50,17 @@ def path_segment(value: str, label: str) -> str:
     return quote(value, safe="")
 
 
-def normalize_arsenal_url(value: str) -> str:
+def normalize_arsenal_url(value: str, *, allow_remote: bool = False) -> str:
     candidate = value.strip().rstrip("/")
     parsed = urlparse(candidate)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ArsenalClientError("Arsenal URL must be an absolute HTTP(S) URL")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ArsenalClientError("Arsenal URL must not contain credentials, query, or fragment")
-    if parsed.hostname.lower() not in LOOPBACK_HOSTS:
+    if parsed.hostname.lower() not in LOOPBACK_HOSTS and not allow_remote:
         raise ArsenalClientError("Arsenal 7C connections are restricted to loopback hosts")
+    if parsed.hostname.lower() not in LOOPBACK_HOSTS and parsed.scheme != "https":
+        raise ArsenalClientError("Remote Arsenal connections require HTTPS")
     if parsed.path not in {"", "/"}:
         raise ArsenalClientError("Arsenal URL must contain only the origin, without a path")
     return candidate
@@ -75,17 +78,19 @@ def session_path(explicit: str | None = None, root: Path | None = None) -> Path:
 def agent_token_path(explicit: str | None = None) -> Path:
     configured = explicit or os.environ.get("ARSENAL_AGENT_TOKEN_FILE")
     if configured:
-        return Path(configured).expanduser().resolve()
+        return Path(os.path.abspath(Path(configured).expanduser()))
     configured_data = os.environ.get("ARSENAL_DATA_DIR")
     if configured_data:
-        return (Path(configured_data).expanduser().resolve() / "agent-token")
+        return Path(
+            os.path.abspath(Path(configured_data).expanduser() / "agent-token")
+        )
     xdg_data_home = os.environ.get("XDG_DATA_HOME")
     base = (
         Path(xdg_data_home).expanduser()
         if xdg_data_home
         else Path.home() / ".local" / "share"
     )
-    return (base / "arsenal" / "agent-token").resolve()
+    return Path(os.path.abspath(base / "arsenal" / "agent-token"))
 
 
 def read_agent_token(path: Path) -> str:
@@ -114,8 +119,9 @@ class ArsenalClient:
         base_url: str,
         timeout: float = DEFAULT_TIMEOUT,
         token_file: str | None = None,
+        allow_remote: bool = False,
     ) -> None:
-        self.base_url = normalize_arsenal_url(base_url)
+        self.base_url = normalize_arsenal_url(base_url, allow_remote=allow_remote)
         self.timeout = timeout
         self.token_file = agent_token_path(token_file)
         self._opener = build_opener(ProxyHandler({}))
@@ -242,6 +248,15 @@ class ArsenalClient:
             raise ArsenalClientError(
                 f"Arsenal is missing proposal capabilities: {', '.join(missing)}"
             )
+        return data
+
+    def operation_schema(self, operation_id: str) -> dict[str, Any]:
+        data = self._get(f"/operations/{path_segment(operation_id, 'operation_id')}")
+        if not isinstance(data, dict) or data.get("id") != operation_id:
+            raise ArsenalClientError("Arsenal operation schema is invalid")
+        parameters = data.get("parameters")
+        if not isinstance(parameters, list):
+            raise ArsenalClientError("Arsenal operation parameters are invalid")
         return data
 
     @staticmethod

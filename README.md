@@ -71,6 +71,19 @@ security execution tools:
   --workspace <workspace-id>
 ```
 
+To use the embedded chat inside Arsenal, start the authenticated gateway on the RedCode
+host. OpenCode is launched on demand for each persisted conversation; the OpenCode TUI
+does not need to be open:
+
+```bash
+./redcode gateway start
+```
+
+The gateway binds to `127.0.0.1:8765`, creates a private `0600` bearer token under
+`~/.local/share/redcode/`, streams assistant text and bounded tool activity, and keeps
+all proposal and run confirmation gates in Arsenal. See
+[`docs/arsenal-integration.md`](docs/arsenal-integration.md) for the Kali/Ubuntu tunnel.
+
 Running `./redcode` interactively offers Standalone and Arsenal profiles. In the Arsenal
 profile, RedCode negotiates protocol 1.0, binds the session to one workspace, disables
 direct HexStrike/Fetch/Playwright/Burp access, and exposes bounded reads plus inert
@@ -163,8 +176,8 @@ Implemented and tested in the repository:
 - agent/configuration/link contract checks;
 - shell syntax checks through CI;
 - a loopback-only Juice Shop integration test and a sanitized evidence fixture derived from two clean-container runs.
-- Arsenal protocol 1.0 clients, workspace handshake, runtime isolation policy, four
-  bounded read tools, and four proposal/status tools.
+- Arsenal protocol 1.0 clients, workspace handshake, runtime isolation policy, five
+  bounded read tools, four proposal/status tools, and the authenticated chat gateway.
 
 Current limitations:
 
