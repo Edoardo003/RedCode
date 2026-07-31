@@ -92,6 +92,13 @@ def get_job(job_id: str, finding_limit: int = 25) -> dict[str, Any]:
 
 
 @mcp.tool()
+def get_operation_schema(operation_id: str) -> dict[str, Any]:
+    """Read the exact Tool Contract parameter schema before constructing a proposal."""
+    client, _workspace_id = _bound_client()
+    return client.operation_schema(operation_id)
+
+
+@mcp.tool()
 def propose_block_draft(
     idempotency_key: str,
     name: str,

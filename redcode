@@ -41,6 +41,10 @@ if [ -n "$PROXY_URL" ]; then
 fi
 
 case "${1:-}" in
+  gateway)
+    shift
+    exec python3 "$DIR/scripts/redcode_gateway.py" "$@"
+    ;;
   doctor|db|engagement|scope|arsenal|runtime)
     exec python3 "$DIR/scripts/redcode_control.py" "$@"
     ;;

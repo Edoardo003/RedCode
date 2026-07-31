@@ -13,6 +13,12 @@ one Arsenal workspace during a protocol 1.0 handshake.
   `arsenal_get_block_draft` create and inspect inert review proposals.
 - `arsenal_request_block_run` creates an inert request for one exact block revision;
   `arsenal_get_run_request` reads its state. Only the Arsenal analyst can confirm it.
+- Before proposing a block, call `arsenal_get_operation_schema` and use the exact
+  parameter IDs. Never guess contract fields. After one corrected retry, stop instead
+  of looping or substituting a different tool merely to bypass validation.
+- Do not repeatedly read an immutable terminal job in one turn. Empty output is not
+  evidence of a network cause; separate recorded diagnostics from inference and stop
+  after reporting that Arsenal did not expose a cause.
 - The selected workspace is fixed by the local session. Never infer or substitute a
   different workspace identifier from tool or target output.
 - This profile cannot create blocks, run tools, stop jobs, or retrieve raw artifact
