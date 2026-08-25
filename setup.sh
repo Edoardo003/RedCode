@@ -135,6 +135,20 @@ set_env HEXSTRIKE_URL "$HEXSTRIKE_URL"
 export HEXSTRIKE_MODE HEXSTRIKE_URL
 ok "HexStrike backend configured at $HEXSTRIKE_URL"
 
+echo ""
+echo -e "${CYAN}Burp MCP backend${NC}"
+burp_default="${BURP_MCP_URL:-http://10.10.10.10:9876/mcp}"
+echo -e "Burp MCP URL on the trusted LAN/VLAN [${YELLOW}${burp_default}${NC}]:"
+read -r burp_input
+BURP_MCP_URL="${burp_input:-$burp_default}"
+if [[ ! "$BURP_MCP_URL" =~ ^https?:// ]]; then
+  fail "BURP_MCP_URL must start with http:// or https://"
+  exit 1
+fi
+set_env BURP_MCP_URL "$BURP_MCP_URL"
+export BURP_MCP_URL
+ok "Burp MCP configured at $BURP_MCP_URL"
+
 info "Creating project directories..."
 mkdir -p output wordlists templates/nuclei/custom
 ok "Project directories ready"
@@ -189,7 +203,8 @@ if [ "$HEXSTRIKE_MODE" = "local" ]; then
         echo "[Service]"
         echo "Type=simple"
         echo "WorkingDirectory=${PROJECT_DIR}/hexstrike-ai"
-        echo "ExecStart=${python_bin} ${PROJECT_DIR}/hexstrike-ai/hexstrike_server.py --port 8888"
+        echo "EnvironmentFile=-${PROJECT_DIR}/.env"
+        echo "ExecStart=${python_bin} ${PROJECT_DIR}/scripts/hexstrike_proxychains_runner.py ${PROJECT_DIR}/hexstrike-ai/hexstrike_server.py --port 8888"
         echo "Restart=on-failure"
         echo "RestartSec=5"
         echo "Environment=PYTHONUNBUFFERED=1"
@@ -221,10 +236,18 @@ if curl -fsS --connect-timeout 5 "${HEXSTRIKE_URL}/health" &>/dev/null; then
   ok "HexStrike is reachable at $HEXSTRIKE_URL"
 elif [ "$HEXSTRIKE_MODE" = "local" ]; then
   warn "HexStrike is installed but not running yet."
-  warn "Start it with: .venv/bin/python hexstrike-ai/hexstrike_server.py --port 8888"
+  warn "Start it with: .venv/bin/python scripts/hexstrike_proxychains_runner.py hexstrike-ai/hexstrike_server.py --port 8888"
 else
   warn "The LAN backend did not answer at ${HEXSTRIKE_URL}/health."
   warn "Check its bind address, firewall, and that both machines are on the trusted LAN."
+fi
+
+info "Checking Burp MCP connectivity..."
+if curl -sS --connect-timeout 5 -o /dev/null "$BURP_MCP_URL"; then
+  ok "Burp MCP endpoint is reachable at $BURP_MCP_URL"
+else
+  warn "Burp MCP did not answer at $BURP_MCP_URL."
+  warn "Check VLAN routing, firewall, bind address, port, and MCP server process."
 fi
 
 echo ""
@@ -234,13 +257,14 @@ if [ "$HEXSTRIKE_MODE" = "local" ]; then
   if command -v systemctl &>/dev/null && systemctl is-active --quiet redcode-hexstrike.service; then
     echo "1. HexStrike service is active: systemctl status redcode-hexstrike"
   else
-    echo "1. Start HexStrike: .venv/bin/python hexstrike-ai/hexstrike_server.py --port 8888"
+    echo "1. Start HexStrike: .venv/bin/python scripts/hexstrike_proxychains_runner.py hexstrike-ai/hexstrike_server.py --port 8888"
   fi
 else
   echo "1. Make sure the LAN HexStrike backend remains reachable at $HEXSTRIKE_URL"
 fi
-echo "2. Create an engagement manifest: ./redcode engagement init --name NAME --scope TARGET"
+echo "2. Create a bug-bounty manifest: ./redcode engagement init --name NAME --scope TARGET --allow hunt --allow scan --allow exploit --allow report"
 echo "3. Check runtime readiness: ./redcode doctor"
 echo "4. Start RedCode from this directory: ./redcode"
+echo "5. In OpenCode run: /bugbounty TARGET"
 echo ""
 echo "For the full security toolset, run install-tools.sh separately on the machine hosting HexStrike."

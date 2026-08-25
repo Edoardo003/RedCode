@@ -1,0 +1,2255 @@
+#!/usr/bin/env python3
+"""Persistent, human-approved workflow controls for RedCode bug-bounty work.
+
+This script intentionally does not send requests to a target. It turns policy,
+selected Burp exports, hypotheses, approvals, evidence, and report drafts into
+auditable local state. Network actions remain analyst-approved and must use the
+matching reviewed manual workflow outside this controller.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import sqlite3
+import sys
+from typing import Any, Iterable
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.request import Request, urlopen
+
+import redcode_control as control
+
+
+ROOT = control.ROOT
+REDACTED = "[REDACTED]"
+OMITTED = "[OMITTED]"
+SENSITIVE_NAMES = {
+    "authorization",
+    "cookie",
+    "set-cookie",
+    "proxy-authorization",
+    "x-api-key",
+    "x-auth-token",
+    "x-csrf-token",
+    "csrf",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "session",
+}
+SAFE_HEADER_NAMES = {
+    "accept",
+    "content-type",
+    "host",
+    "origin",
+    "referer",
+    "user-agent",
+    "x-requested-with",
+}
+UUID_SEGMENT = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+NUMERIC_SEGMENT = re.compile(r"^\d+$")
+OPAQUE_SEGMENT = re.compile(r"^[A-Za-z0-9_-]{20,}$")
+SAFE_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+class BugBountyError(RuntimeError):
+    """A recoverable problem that should be shown to the analyst."""
+
+
+def utc_now() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+
+
+def utc_text(value: dt.datetime | None = None) -> str:
+    return (value or utc_now()).isoformat()
+
+
+def canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def require_label(value: str, field: str = "label") -> str:
+    if not SAFE_LABEL.fullmatch(value):
+        raise BugBountyError(
+            f"{field} must contain only letters, numbers, dots, underscores, or hyphens"
+        )
+    return value
+
+
+def output_directory(manifest: dict[str, Any]) -> Path:
+    path = ROOT / "output" / manifest["name"] / "scans" / "mappa"
+    path.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        path.chmod(0o700)
+    return path
+
+
+def write_private(path: Path, content: str | bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(content, str):
+        path.write_text(content, encoding="utf-8")
+    else:
+        path.write_bytes(content)
+    if os.name != "nt":
+        path.chmod(0o600)
+
+
+def is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def connect(args: argparse.Namespace) -> tuple[sqlite3.Connection, dict[str, Any], Path, int]:
+    manifest_file = control.manifest_path(args.manifest)
+    try:
+        manifest = control.read_manifest(manifest_file)
+    except ValueError as error:
+        raise BugBountyError(str(error)) from error
+    if manifest["workflow"] != "assessment":
+        raise BugBountyError("bug-bounty work requires an assessment engagement manifest")
+    if "hunt" not in manifest["allowed_actions"]:
+        raise BugBountyError("the active manifest must allow the hunt action")
+
+    db_path = control.database_path(args.db)
+    try:
+        control.migrate_database(db_path)
+    except (OSError, sqlite3.Error, RuntimeError) as error:
+        raise BugBountyError(f"database migration failed: {error}") from error
+    connection = sqlite3.connect(db_path)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    engagement_id = ensure_engagement(connection, manifest, manifest_file)
+    return connection, manifest, manifest_file, engagement_id
+
+
+def ensure_engagement(
+    connection: sqlite3.Connection, manifest: dict[str, Any], manifest_file: Path
+) -> int:
+    connection.execute(
+        "INSERT INTO engagements (engagement_key, name, workflow, mode, manifest_path) "
+        "VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(engagement_key) DO UPDATE SET "
+        "name=excluded.name, workflow=excluded.workflow, mode=excluded.mode, "
+        "manifest_path=excluded.manifest_path, updated_at=datetime('now')",
+        (
+            manifest["name"],
+            manifest["name"],
+            manifest["workflow"],
+            manifest["mode"],
+            str(manifest_file),
+        ),
+    )
+    row = connection.execute(
+        "SELECT id FROM engagements WHERE engagement_key = ?", (manifest["name"],)
+    ).fetchone()
+    assert row is not None
+    return int(row["id"])
+
+
+def get_program(connection: sqlite3.Connection, engagement_id: int) -> sqlite3.Row:
+    row = connection.execute(
+        "SELECT * FROM bug_bounty_programs WHERE engagement_id = ?", (engagement_id,)
+    ).fetchone()
+    if row is None:
+        raise BugBountyError("program not onboarded; run ./redcode bugbounty onboard first")
+    return row
+
+
+def ensure_target(connection: sqlite3.Connection, target: str, scope: str) -> int:
+    host, _, _, _ = control.target_parts(target)
+    connection.execute(
+        "INSERT INTO targets (domain, scope, type) VALUES (?, ?, 'web') "
+        "ON CONFLICT(domain) DO UPDATE SET scope=excluded.scope",
+        (host, scope),
+    )
+    row = connection.execute("SELECT id FROM targets WHERE domain = ?", (host,)).fetchone()
+    assert row is not None
+    return int(row["id"])
+
+
+def identity_row(
+    connection: sqlite3.Connection, engagement_id: int, label: str
+) -> sqlite3.Row:
+    row = connection.execute(
+        "SELECT * FROM identities WHERE engagement_id = ? AND label = ?",
+        (engagement_id, label),
+    ).fetchone()
+    if row is None:
+        raise BugBountyError(
+            f"unknown symbolic identity '{label}'; add it with ./redcode bugbounty identity add"
+        )
+    return row
+
+
+def policy_snapshot(connection: sqlite3.Connection, engagement_id: int) -> sqlite3.Row:
+    row = connection.execute(
+        "SELECT * FROM policy_snapshots WHERE engagement_id = ? "
+        "AND status = 'reviewed' ORDER BY reviewed_at DESC LIMIT 1",
+        (engagement_id,),
+    ).fetchone()
+    if row is None:
+        raise BugBountyError("no reviewed program-policy snapshot is available")
+    snapshot_path = (ROOT / row["snapshot_path"]).resolve()
+    if not is_within(snapshot_path, ROOT / "output") or not snapshot_path.is_file():
+        raise BugBountyError(
+            "reviewed program-policy snapshot is missing or outside output/; re-onboard the program"
+        )
+    if sha256_path(snapshot_path) != row["sha256"]:
+        raise BugBountyError(
+            "reviewed program-policy snapshot no longer matches its recorded hash; re-onboard the program"
+        )
+    return row
+
+
+def policy_decision(
+    connection: sqlite3.Connection,
+    manifest: dict[str, Any],
+    engagement_id: int,
+    target: str,
+    action: str,
+) -> tuple[bool, str]:
+    allowed, reason = control.scope_decision(manifest, target, action)
+    if not allowed:
+        return False, f"manifest: {reason}"
+    try:
+        policy_snapshot(connection, engagement_id)
+    except BugBountyError as error:
+        return False, str(error)
+
+    restriction = connection.execute(
+        "SELECT reason FROM program_restrictions WHERE engagement_id = ? AND active = 1 "
+        "AND action IN ('all', ?)",
+        (engagement_id, action),
+    ).fetchone()
+    if restriction is not None:
+        return False, f"program policy prohibits {action}: {restriction['reason']}"
+
+    rules = connection.execute(
+        "SELECT rule, disposition FROM program_scope_rules "
+        "WHERE engagement_id = ? AND active = 1",
+        (engagement_id,),
+    ).fetchall()
+    if not rules:
+        return False, "program policy has no active scope rules"
+    if any(row["disposition"] == "deny" and control.rule_matches(row["rule"], target) for row in rules):
+        return False, f"target {target} matches a program-policy exclusion"
+    if not any(
+        row["disposition"] == "allow" and control.rule_matches(row["rule"], target)
+        for row in rules
+    ):
+        return False, f"target {target} is outside the reviewed program policy"
+    return True, f"{action} is allowed by the manifest and reviewed program policy"
+
+
+def require_policy_action(
+    connection: sqlite3.Connection,
+    manifest: dict[str, Any],
+    engagement_id: int,
+    target: str,
+    action: str,
+) -> None:
+    allowed, reason = policy_decision(connection, manifest, engagement_id, target, action)
+    if not allowed:
+        raise BugBountyError(reason)
+
+
+def record_hypothesis_event(
+    connection: sqlite3.Connection,
+    hypothesis_db_id: int,
+    event_type: str,
+    *,
+    from_status: str | None = None,
+    to_status: str | None = None,
+    actor: str | None = None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    connection.execute(
+        "INSERT INTO hypothesis_events "
+        "(hypothesis_id, event_type, from_status, to_status, actor, details_json) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            hypothesis_db_id,
+            event_type,
+            from_status,
+            to_status,
+            actor,
+            canonical_json(details or {}),
+        ),
+    )
+
+
+def redact_url(raw_url: str) -> tuple[str, int, list[str]]:
+    parsed = urlparse(raw_url)
+    if not parsed.scheme or not parsed.hostname:
+        raise BugBountyError(f"Burp message has an invalid URL: {raw_url!r}")
+    pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    query_names = [key for key, _ in pairs]
+    redacted = [(key, REDACTED) for key, _ in pairs]
+    host = parsed.hostname or ""
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    safe_parts = parsed._replace(netloc=host, query=urlencode(redacted, doseq=True), fragment="")
+    extra_redactions = int(bool(parsed.username or parsed.password)) + int(bool(parsed.fragment))
+    return urlunparse(safe_parts), len(pairs) + extra_redactions, query_names
+
+
+def safe_origin(parsed: Any) -> str:
+    """Return an origin safe to persist as target scope metadata."""
+    if not parsed.scheme or not parsed.hostname:
+        raise BugBountyError("cannot derive a safe origin from an invalid URL")
+    host = parsed.hostname.lower()
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    return f"{parsed.scheme.lower()}://{host}"
+
+
+def safe_target_scope(target: str) -> str:
+    """Normalize a user-supplied URL or hostname before writing target metadata."""
+    candidate = target.strip()
+    parsed = urlparse(candidate if "://" in candidate else f"//{candidate}")
+    if not parsed.hostname:
+        raise BugBountyError("target must contain a hostname")
+    if parsed.scheme:
+        return safe_origin(parsed)
+    return parsed.hostname.lower()
+
+
+def header_pairs(value: Any) -> Iterable[tuple[str, str]]:
+    if isinstance(value, dict):
+        for name, header_value in value.items():
+            yield str(name), str(header_value)
+    elif isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict):
+                name = item.get("name") or item.get("key")
+                header_value = item.get("value", "")
+                if name is not None:
+                    yield str(name), str(header_value)
+            elif isinstance(item, str) and ":" in item:
+                name, header_value = item.split(":", 1)
+                yield name.strip(), header_value.strip()
+    elif isinstance(value, str):
+        for line in value.splitlines():
+            if ":" in line:
+                name, header_value = line.split(":", 1)
+                yield name.strip(), header_value.strip()
+
+
+def redact_headers(value: Any) -> tuple[dict[str, str], int]:
+    result: dict[str, str] = {}
+    redactions = 0
+    for name, header_value in header_pairs(value):
+        normalized = name.lower()
+        if normalized in SENSITIVE_NAMES or any(token in normalized for token in SENSITIVE_NAMES):
+            result[name] = REDACTED
+            redactions += 1
+        elif normalized in SAFE_HEADER_NAMES:
+            if normalized == "referer":
+                try:
+                    result[name], count, _ = redact_url(header_value)
+                    redactions += count
+                except BugBountyError:
+                    result[name] = OMITTED
+                    redactions += 1
+            else:
+                result[name] = header_value[:512]
+        else:
+            result[name] = OMITTED
+            redactions += 1
+    return result, redactions
+
+
+def redact_json(value: Any, key: str = "") -> tuple[Any, int]:
+    normalized = key.lower()
+    if normalized and (
+        normalized in SENSITIVE_NAMES
+        or any(token in normalized for token in SENSITIVE_NAMES)
+    ):
+        return REDACTED, 1
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        count = 0
+        for child_key, child_value in value.items():
+            redacted, child_count = redact_json(child_value, str(child_key))
+            result[str(child_key)] = redacted
+            count += child_count
+        return result, count
+    if isinstance(value, list):
+        result_list: list[Any] = []
+        count = 0
+        for item in value[:100]:
+            redacted, child_count = redact_json(item, key)
+            result_list.append(redacted)
+            count += child_count
+        return result_list, count
+    if value is None or isinstance(value, bool):
+        return value, 0
+    return OMITTED, 1
+
+
+def redact_body(value: Any) -> tuple[Any, int]:
+    if value is None or value == "":
+        return None, 0
+    if isinstance(value, (dict, list)):
+        return redact_json(value)
+    text = str(value)
+    try:
+        return redact_json(json.loads(text))
+    except (TypeError, json.JSONDecodeError):
+        pairs = parse_qsl(text, keep_blank_values=True)
+        if pairs and "=" in text:
+            return {key: REDACTED for key, _ in pairs}, len(pairs)
+    return {"omitted_sha256": sha256_bytes(text.encode("utf-8")), "bytes": len(text)}, 1
+
+
+def normalize_path(path: str) -> tuple[str, bool]:
+    segments = path.split("/")
+    normalized: list[str] = []
+    has_object_id = False
+    for segment in segments:
+        if NUMERIC_SEGMENT.fullmatch(segment) or UUID_SEGMENT.fullmatch(segment) or OPAQUE_SEGMENT.fullmatch(segment):
+            normalized.append("{id}")
+            has_object_id = True
+        else:
+            normalized.append(segment)
+    result = "/".join(normalized) or "/"
+    return result if result.startswith("/") else f"/{result}", has_object_id
+
+
+def message_value(message: dict[str, Any], name: str, default: Any = None) -> Any:
+    request = message.get("request")
+    if isinstance(request, dict) and name in request:
+        return request[name]
+    return message.get(name, default)
+
+
+def message_url(message: dict[str, Any]) -> str:
+    value = message_value(message, "url")
+    if value:
+        return str(value)
+    host = message_value(message, "host")
+    path = message_value(message, "path", "/")
+    scheme = message_value(message, "scheme", "https")
+    if host:
+        return f"{scheme}://{host}{path}"
+    raise BugBountyError("Burp message is missing url or host/path")
+
+
+def parse_messages(source: Path) -> list[dict[str, Any]]:
+    try:
+        text = source.read_text(encoding="utf-8")
+    except OSError as error:
+        raise BugBountyError(f"cannot read Burp export: {error}") from error
+    try:
+        decoded = json.loads(text)
+    except json.JSONDecodeError:
+        decoded = []
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                decoded.append(json.loads(line))
+            except json.JSONDecodeError as error:
+                raise BugBountyError(
+                    f"invalid JSONL in Burp export at line {line_number}: {error}"
+                ) from error
+    if isinstance(decoded, dict):
+        for key in ("messages", "items", "history", "site_map"):
+            if isinstance(decoded.get(key), list):
+                decoded = decoded[key]
+                break
+        else:
+            decoded = [decoded]
+    if not isinstance(decoded, list) or any(not isinstance(item, dict) for item in decoded):
+        raise BugBountyError("Burp export must be a JSON array, JSONL, or an object containing messages")
+    return decoded
+
+
+def merged_endpoint_metadata(
+    existing_json: str | None,
+    *,
+    query_parameters: list[str],
+    identity_label: str,
+    has_object_id: bool,
+) -> dict[str, Any]:
+    """Preserve accumulated safe endpoint observations across imports."""
+    try:
+        existing = json.loads(existing_json or "{}")
+    except json.JSONDecodeError:
+        existing = {}
+    if not isinstance(existing, dict):
+        existing = {}
+    prior_parameters = existing.get("query_parameters", [])
+    prior_identities = existing.get("identity_labels", [])
+    if not isinstance(prior_parameters, list):
+        prior_parameters = []
+    if not isinstance(prior_identities, list):
+        prior_identities = []
+    return {
+        "query_parameters": sorted({str(item) for item in prior_parameters} | set(query_parameters)),
+        "identity_labels": sorted({str(item) for item in prior_identities} | {identity_label}),
+        "has_object_identifier": bool(existing.get("has_object_identifier")) or has_object_id,
+    }
+
+
+def upsert_endpoint(
+    connection: sqlite3.Connection,
+    engagement_id: int,
+    target_id: int,
+    parsed: Any,
+    method: str,
+    path_template: str,
+    *,
+    query_parameters: list[str],
+    identity_label: str,
+    has_object_id: bool,
+) -> int:
+    endpoint_key = f"{parsed.scheme.lower()}://{parsed.hostname.lower()} {method} {path_template}"
+    state_change = int(method in {"POST", "PUT", "PATCH", "DELETE"})
+    existing = connection.execute(
+        "SELECT metadata_json FROM endpoints WHERE engagement_id = ? AND endpoint_key = ?",
+        (engagement_id, endpoint_key),
+    ).fetchone()
+    metadata = merged_endpoint_metadata(
+        existing["metadata_json"] if existing is not None else None,
+        query_parameters=query_parameters,
+        identity_label=identity_label,
+        has_object_id=has_object_id,
+    )
+    connection.execute(
+        "INSERT INTO endpoints "
+        "(engagement_id, target_id, endpoint_key, host, method, path_template, protocol, "
+        "state_change, auth_required, source, metadata_json) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'burp', ?) "
+        "ON CONFLICT(engagement_id, endpoint_key) DO UPDATE SET "
+        "last_seen_at=datetime('now'), state_change=MAX(endpoints.state_change, excluded.state_change), "
+        "auth_required=MAX(COALESCE(endpoints.auth_required, 0), excluded.auth_required), "
+        "metadata_json=excluded.metadata_json",
+        (
+            engagement_id,
+            target_id,
+            endpoint_key,
+            parsed.hostname.lower(),
+            method,
+            path_template,
+            parsed.scheme.lower(),
+            state_change,
+            int(identity_label != "anon"),
+            canonical_json(metadata),
+        ),
+    )
+    row = connection.execute(
+        "SELECT id FROM endpoints WHERE engagement_id = ? AND endpoint_key = ?",
+        (engagement_id, endpoint_key),
+    ).fetchone()
+    assert row is not None
+    return int(row["id"])
+
+
+def command_onboard(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        policy_file = Path(args.policy_file).expanduser().resolve()
+        if not policy_file.is_file():
+            raise BugBountyError(f"policy snapshot file not found: {policy_file}")
+        policy_bytes = policy_file.read_bytes()
+        if len(policy_bytes) > 5 * 1024 * 1024:
+            raise BugBountyError("policy snapshot is larger than 5 MiB")
+        program_dir = output_directory(manifest)
+        digest = sha256_bytes(policy_bytes)
+        snapshot_name = (
+            f"policy-{utc_now().strftime('%Y%m%dT%H%M%SZ')}-{digest[:12]}"
+            f"{policy_file.suffix or '.txt'}"
+        )
+        snapshot_path = program_dir / snapshot_name
+        write_private(snapshot_path, policy_bytes)
+
+        old_snapshots = connection.execute(
+            "SELECT id FROM policy_snapshots WHERE engagement_id = ? AND status = 'reviewed'",
+            (engagement_id,),
+        ).fetchall()
+        if old_snapshots:
+            connection.execute(
+                "UPDATE policy_snapshots SET status = 'superseded' "
+                "WHERE engagement_id = ? AND status = 'reviewed'",
+                (engagement_id,),
+            )
+        connection.execute(
+            "INSERT INTO policy_snapshots "
+            "(engagement_id, source_url, snapshot_path, sha256, reviewed_by, reviewed_at, notes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                engagement_id,
+                args.policy_url,
+                str(snapshot_path.relative_to(ROOT)),
+                digest,
+                args.reviewed_by,
+                utc_text(),
+                args.policy_notes,
+            ),
+        )
+        snapshot_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
+        active_plans = connection.execute(
+            "SELECT p.id, p.hypothesis_id, p.status, h.status AS hypothesis_status "
+            "FROM test_plans p JOIN hypotheses h ON h.id = p.hypothesis_id "
+            "WHERE p.engagement_id = ? AND p.status IN ('draft', 'approved', 'testing')",
+            (engagement_id,),
+        ).fetchall()
+        connection.execute(
+            "DELETE FROM program_scope_rules WHERE engagement_id = ? AND active = 0",
+            (engagement_id,),
+        )
+        connection.execute(
+            "DELETE FROM program_restrictions WHERE engagement_id = ? AND active = 0",
+            (engagement_id,),
+        )
+        connection.execute(
+            "UPDATE program_scope_rules SET active = 0 WHERE engagement_id = ? AND active = 1",
+            (engagement_id,),
+        )
+        connection.execute(
+            "UPDATE program_restrictions SET active = 0 WHERE engagement_id = ? AND active = 1",
+            (engagement_id,),
+        )
+        if active_plans:
+            connection.execute(
+                "UPDATE approval_executions SET status = 'cancelled', completed_at = datetime('now'), "
+                "result_summary = COALESCE(result_summary, 'Cancelled because the reviewed policy changed') "
+                "WHERE test_plan_id IN (SELECT id FROM test_plans WHERE engagement_id = ?) "
+                "AND status = 'started'",
+                (engagement_id,),
+            )
+            connection.execute(
+                "UPDATE test_plans SET status = CASE WHEN status = 'draft' THEN 'superseded' ELSE 'cancelled' END, "
+                "updated_at = datetime('now') WHERE engagement_id = ? "
+                "AND status IN ('draft', 'approved', 'testing')",
+                (engagement_id,),
+            )
+            reset_hypotheses: set[int] = set()
+            for plan in active_plans:
+                if plan["hypothesis_status"] in {"approved", "testing"} and plan["hypothesis_id"] not in reset_hypotheses:
+                    reset_hypotheses.add(int(plan["hypothesis_id"]))
+                    connection.execute(
+                        "UPDATE hypotheses SET status = 'queued' WHERE id = ?",
+                        (plan["hypothesis_id"],),
+                    )
+                    record_hypothesis_event(
+                        connection,
+                        int(plan["hypothesis_id"]),
+                        "policy-changed",
+                        from_status=plan["hypothesis_status"],
+                        to_status="queued",
+                        actor=args.reviewed_by,
+                        details={"cancelled_plan_id": plan["id"]},
+                    )
+        for rule in args.scope:
+            connection.execute(
+                "INSERT INTO program_scope_rules (engagement_id, rule, disposition, source_snapshot_id) "
+                "VALUES (?, ?, 'allow', ?)",
+                (engagement_id, rule, snapshot_id),
+            )
+        for rule in args.out_of_scope or []:
+            connection.execute(
+                "INSERT INTO program_scope_rules (engagement_id, rule, disposition, source_snapshot_id) "
+                "VALUES (?, ?, 'deny', ?)",
+                (engagement_id, rule, snapshot_id),
+            )
+        for action in args.prohibit_action or []:
+            connection.execute(
+                "INSERT INTO program_restrictions "
+                "(engagement_id, action, reason, source_snapshot_id) VALUES (?, ?, ?, ?)",
+                (engagement_id, action, args.restriction_reason or "program policy", snapshot_id),
+            )
+        connection.execute(
+            "INSERT INTO bug_bounty_programs "
+            "(engagement_id, platform, program_name, program_url, policy_url, policy_snapshot_path, "
+            "currency, minimum_bounty, maximum_bounty, account_requirements, duplicate_risk, notes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(engagement_id) DO UPDATE SET "
+            "platform=excluded.platform, program_name=excluded.program_name, "
+            "program_url=excluded.program_url, policy_url=excluded.policy_url, "
+            "policy_snapshot_path=excluded.policy_snapshot_path, currency=excluded.currency, "
+            "minimum_bounty=excluded.minimum_bounty, maximum_bounty=excluded.maximum_bounty, "
+            "account_requirements=excluded.account_requirements, duplicate_risk=excluded.duplicate_risk, "
+            "notes=excluded.notes, updated_at=datetime('now')",
+            (
+                engagement_id,
+                args.platform,
+                args.program_name,
+                args.program_url,
+                args.policy_url,
+                str(snapshot_path.relative_to(ROOT)),
+                args.currency,
+                args.minimum_bounty,
+                args.maximum_bounty,
+                args.account_requirements,
+                args.duplicate_risk,
+                args.notes,
+            ),
+        )
+        connection.execute(
+            "INSERT INTO identities (engagement_id, label, auth_state, notes) VALUES (?, 'anon', 'anonymous', ?) "
+            "ON CONFLICT(engagement_id, label) DO NOTHING",
+            (engagement_id, "Baseline unauthenticated traffic"),
+        )
+        connection.execute(
+            "INSERT INTO hunt_sessions (engagement_id, objective, status) VALUES (?, ?, 'running')",
+            (engagement_id, args.objective or "Initial program mapping"),
+        )
+        connection.commit()
+        print(f"Program onboarded: {args.program_name} ({args.platform})")
+        print(f"Reviewed policy snapshot: {snapshot_path.relative_to(ROOT)}")
+        print(f"Program policy scope: {len(args.scope)} allow rule(s), {len(args.out_of_scope or [])} exclusion(s)")
+        print("Next: add symbolic identities, then import a selected redacted Burp export.")
+        return 0
+    finally:
+        connection.close()
+
+
+def command_identity_add(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        label = require_label(args.label)
+        target_id = None
+        if args.target:
+            require_policy_action(connection, manifest, engagement_id, args.target, "hunt")
+            target_id = ensure_target(connection, args.target, safe_target_scope(args.target))
+        connection.execute(
+            "INSERT INTO identities "
+            "(engagement_id, target_id, label, tenant, role, auth_state, burp_label, notes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(engagement_id, label) DO UPDATE SET "
+            "target_id=excluded.target_id, tenant=excluded.tenant, role=excluded.role, "
+            "auth_state=excluded.auth_state, burp_label=excluded.burp_label, notes=excluded.notes, "
+            "updated_at=datetime('now')",
+            (
+                engagement_id,
+                target_id,
+                label,
+                args.tenant,
+                args.role,
+                args.auth_state,
+                args.burp_label,
+                args.notes,
+            ),
+        )
+        connection.commit()
+        print(f"Symbolic identity saved: {label}")
+        return 0
+    finally:
+        connection.close()
+
+
+def command_check(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        get_program(connection, engagement_id)
+        allowed, reason = policy_decision(
+            connection, manifest, engagement_id, args.target, args.action
+        )
+        print(("ALLOW: " if allowed else "DENY: ") + reason)
+        return 0 if allowed else 1
+    finally:
+        connection.close()
+
+
+def command_ingest(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        get_program(connection, engagement_id)
+        identity = identity_row(connection, engagement_id, args.identity)
+        source = Path(args.file).expanduser().resolve()
+        messages = parse_messages(source)
+        source_hash = sha256_path(source)
+        cursor = args.cursor or source_hash[:16]
+        connection.execute(
+            "INSERT INTO burp_import_runs "
+            "(engagement_id, source_kind, source_path, source_sha256, cursor_value) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (engagement_id, args.source_kind, str(source), source_hash, cursor),
+        )
+        import_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
+        artifact_path = output_directory(manifest) / f"burp-import-{import_id}.redacted.json"
+        artifacts: list[dict[str, Any]] = []
+        imported = skipped = redactions = 0
+        for index, message in enumerate(messages, start=1):
+            try:
+                raw_url = message_url(message)
+                safe_url, url_redactions, query_parameters = redact_url(raw_url)
+                parsed = urlparse(raw_url)
+                require_policy_action(connection, manifest, engagement_id, raw_url, "hunt")
+                method = str(message_value(message, "method", "GET")).upper()
+                if method not in {"GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"}:
+                    raise BugBountyError(f"unsupported HTTP method in Burp export: {method}")
+                path_template, has_object_id = normalize_path(parsed.path or "/")
+                persisted_url = urlunparse(urlparse(safe_url)._replace(path=path_template))
+                # Targets are persisted long-lived. Never retain raw query values,
+                # userinfo, or fragments there merely because Burp observed them.
+                target_id = ensure_target(connection, safe_url, safe_origin(parsed))
+                endpoint_id = upsert_endpoint(
+                    connection,
+                    engagement_id,
+                    target_id,
+                    parsed,
+                    method,
+                    path_template,
+                    query_parameters=query_parameters,
+                    identity_label=str(identity["label"]),
+                    has_object_id=has_object_id,
+                )
+                source_reference = str(
+                    message.get("id")
+                    or message.get("message_id")
+                    or message.get("reference")
+                    or f"{source_hash[:16]}-{index}"
+                )
+                # Burp message identifiers are commonly unique only within one
+                # export/project. Namespace them by the selected export so two
+                # distinct sources cannot overwrite each other's provenance.
+                reference = f"{source_hash[:16]}:{source_reference}"
+                fingerprint = sha256_bytes(
+                    canonical_json(
+                        {
+                            "identity_id": int(identity["id"]),
+                            "method": method,
+                            "url": persisted_url,
+                        }
+                    ).encode("utf-8")
+                )
+                headers, header_redactions = redact_headers(message_value(message, "headers", {}))
+                body, body_redactions = redact_body(message_value(message, "body"))
+                redactions += url_redactions + header_redactions + body_redactions
+                try:
+                    connection.execute(
+                        "INSERT INTO burp_message_refs "
+                        "(engagement_id, import_run_id, endpoint_id, identity_id, message_ref, source_message_ref, "
+                        "request_fingerprint, method, url, request_artifact_path) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            engagement_id,
+                            import_id,
+                            endpoint_id,
+                            int(identity["id"]),
+                            reference,
+                            source_reference,
+                            fingerprint,
+                            method,
+                            persisted_url,
+                            str(artifact_path.relative_to(ROOT)) if args.include_bodies else None,
+                        ),
+                    )
+                except sqlite3.IntegrityError:
+                    skipped += 1
+                    continue
+                if args.include_bodies:
+                    artifacts.append(
+                        {
+                            "reference": reference,
+                            "method": method,
+                            "url": persisted_url,
+                            "headers": headers,
+                            "body": body,
+                        }
+                    )
+                imported += 1
+            except BugBountyError:
+                skipped += 1
+
+        artifact_hash = None
+        if args.include_bodies and artifacts:
+            artifact_text = json.dumps({"messages": artifacts}, indent=2, ensure_ascii=False) + "\n"
+            write_private(artifact_path, artifact_text)
+            artifact_hash = sha256_path(artifact_path)
+            connection.execute(
+                "UPDATE burp_message_refs SET request_sha256 = ? WHERE import_run_id = ?",
+                (artifact_hash, import_id),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO evidence (path, sha256, mime_type, size_bytes, notes) "
+                "VALUES (?, ?, 'application/json', ?, ?)",
+                (
+                    str(artifact_path.relative_to(ROOT)),
+                    artifact_hash,
+                    artifact_path.stat().st_size,
+                    f"Redacted Burp import {import_id}",
+                ),
+            )
+        connection.execute(
+            "UPDATE burp_import_runs SET messages_seen = ?, messages_imported = ?, "
+            "messages_skipped = ?, redacted_fields = ?, status = 'completed', completed_at = datetime('now') "
+            "WHERE id = ?",
+            (len(messages), imported, skipped, redactions, import_id),
+        )
+        connection.execute(
+            "UPDATE hunt_sessions SET endpoints_seen = ("
+            "SELECT COUNT(*) FROM endpoints WHERE engagement_id = ?) "
+            "WHERE id = (SELECT id FROM hunt_sessions WHERE engagement_id = ? "
+            "AND status = 'running' ORDER BY started_at DESC LIMIT 1)",
+            (engagement_id, engagement_id),
+        )
+        connection.commit()
+        print(
+            f"Burp import {import_id}: {imported} message(s) imported, {skipped} skipped, "
+            f"{redactions} value(s) redacted."
+        )
+        if artifact_hash:
+            print(f"Redacted artifact: {artifact_path.relative_to(ROOT)}")
+        print("Next: ./redcode bugbounty map, then ./redcode bugbounty queue --generate")
+        return 0
+    except Exception as error:
+        connection.rollback()
+        if isinstance(error, BugBountyError):
+            print(f"Bug-bounty ingest failed: {error}", file=sys.stderr)
+            return 1
+        raise
+    finally:
+        connection.close()
+
+
+def root_segment(path_template: str) -> str:
+    parts = [part for part in path_template.split("/") if part and part != "{id}"]
+    return parts[0] if parts else "root"
+
+
+def json_string_set(value: str | None) -> set[str]:
+    try:
+        decoded = json.loads(value or "[]")
+    except json.JSONDecodeError:
+        return set()
+    if not isinstance(decoded, list):
+        return set()
+    return {str(item) for item in decoded if isinstance(item, (str, int, float))}
+
+
+def endpoint_identity_context(
+    connection: sqlite3.Connection, engagement_id: int
+) -> dict[int, list[sqlite3.Row]]:
+    rows = connection.execute(
+        "SELECT b.endpoint_id, i.label, i.tenant, i.role, i.auth_state, COUNT(*) AS observations "
+        "FROM burp_message_refs b JOIN identities i ON i.id = b.identity_id "
+        "WHERE b.engagement_id = ? GROUP BY b.endpoint_id, i.id "
+        "ORDER BY b.endpoint_id, i.label",
+        (engagement_id,),
+    ).fetchall()
+    result: dict[int, list[sqlite3.Row]] = {}
+    for row in rows:
+        result.setdefault(int(row["endpoint_id"]), []).append(row)
+    return result
+
+
+def describe_identity(row: sqlite3.Row) -> str:
+    details = [value for value in (row["role"], row["tenant"]) if value]
+    return f"{row['label']} ({', '.join(details)})" if details else str(row["label"])
+
+
+def workflow_key_for(endpoint: sqlite3.Row) -> str:
+    return f"{endpoint['host']}:{root_segment(endpoint['path_template'])}"
+
+
+def existing_workflow_context(
+    connection: sqlite3.Connection, engagement_id: int
+) -> dict[str, dict[str, Any]]:
+    rows = connection.execute(
+        "SELECT * FROM application_workflows WHERE engagement_id = ?", (engagement_id,)
+    ).fetchall()
+    return {
+        str(row["workflow_key"]): {
+            "id": int(row["id"]),
+            "target_id": row["target_id"],
+            "name": str(row["name"]),
+            "actors": json_string_set(row["actors_json"]),
+            "objects": json_string_set(row["objects_json"]),
+            "states": json_string_set(row["states_json"]),
+            "sensitivity": int(row["sensitivity"]),
+            "notes": row["notes"],
+        }
+        for row in rows
+    }
+
+
+def inferred_workflow_sensitivity(name: str) -> int:
+    return 3 if name.lower() in {"admin", "billing", "account", "users", "payments"} else 1
+
+
+def command_map(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        get_program(connection, engagement_id)
+        endpoints = connection.execute(
+            "SELECT e.*, COUNT(DISTINCT b.identity_id) AS identity_count "
+            "FROM endpoints e LEFT JOIN burp_message_refs b ON b.endpoint_id = e.id "
+            "WHERE e.engagement_id = ? GROUP BY e.id ORDER BY e.host, e.path_template, e.method",
+            (engagement_id,),
+        ).fetchall()
+        identities_by_endpoint = endpoint_identity_context(connection, engagement_id)
+        prior_workflows = existing_workflow_context(connection, engagement_id)
+        workflows: dict[str, dict[str, Any]] = {}
+        gaps: list[str] = []
+        for endpoint in endpoints:
+            if endpoint["coverage_status"] == "observed":
+                connection.execute(
+                    "UPDATE endpoints SET coverage_status = 'mapped' WHERE id = ?", (endpoint["id"],)
+                )
+            group = workflow_key_for(endpoint)
+            existing = prior_workflows.get(group, {})
+            workflow = workflows.setdefault(
+                group,
+                {
+                    "target_id": endpoint["target_id"],
+                    "host": endpoint["host"],
+                    "name": root_segment(endpoint["path_template"]),
+                    "actors": set(existing.get("actors", set())),
+                    "objects": set(existing.get("objects", set())),
+                    "states": set(existing.get("states", set())) | {"observed"},
+                    "sensitivity": max(
+                        int(existing.get("sensitivity", 0)),
+                        inferred_workflow_sensitivity(root_segment(endpoint["path_template"])),
+                    ),
+                },
+            )
+            workflow["objects"].add(
+                endpoint["object_type"]
+                or ("object" if "{id}" in endpoint["path_template"] else "resource")
+            )
+            identities = identities_by_endpoint.get(int(endpoint["id"]), [])
+            if identities:
+                workflow["actors"].update(describe_identity(identity) for identity in identities)
+            else:
+                workflow["actors"].add("authenticated" if endpoint["auth_required"] else "anonymous")
+            identity_count = len({str(identity["label"]) for identity in identities})
+            tenant_count = len({str(identity["tenant"]) for identity in identities if identity["tenant"]})
+            if endpoint["state_change"] and identity_count < 2:
+                gaps.append(
+                    f"{endpoint['method']} {endpoint['host']}{endpoint['path_template']}: "
+                    "state-changing endpoint observed with fewer than two symbolic identities"
+                )
+            if "{id}" in endpoint["path_template"] and tenant_count < 2:
+                gaps.append(
+                    f"{endpoint['method']} {endpoint['host']}{endpoint['path_template']}: "
+                    "object reference has no cross-tenant coverage"
+                )
+        for key, workflow in workflows.items():
+            connection.execute(
+                "INSERT INTO application_workflows "
+                "(engagement_id, target_id, workflow_key, name, states_json, actors_json, objects_json, sensitivity) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(engagement_id, workflow_key) DO UPDATE SET "
+                "target_id=excluded.target_id, name=excluded.name, "
+                "states_json=excluded.states_json, actors_json=excluded.actors_json, "
+                "objects_json=excluded.objects_json, sensitivity=MAX(application_workflows.sensitivity, excluded.sensitivity), "
+                "updated_at=datetime('now')",
+                (
+                    engagement_id,
+                    workflow["target_id"],
+                    key,
+                    f"{workflow['host']} / {workflow['name']}",
+                    canonical_json(sorted(workflow["states"])),
+                    canonical_json(sorted(workflow["actors"])),
+                    canonical_json(sorted(workflow["objects"])),
+                    3 if workflow["name"] in {"admin", "billing", "account", "users"} else 1,
+                ),
+            )
+        report_path = output_directory(manifest) / "application-map.md"
+        lines = [
+            "# Application map",
+            "",
+            f"Generated: {utc_text()}",
+            "",
+            "## Endpoints",
+            "",
+            "| Method | Endpoint | Auth | State change | Symbolic identities | Coverage |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+        for endpoint in endpoints:
+            identity_details = ", ".join(
+                describe_identity(identity)
+                for identity in identities_by_endpoint.get(int(endpoint["id"]), [])
+            ) or "-"
+            lines.append(
+                f"| {endpoint['method']} | {endpoint['host']}{endpoint['path_template']} | "
+                f"{'yes' if endpoint['auth_required'] else 'no'} | "
+                f"{'yes' if endpoint['state_change'] else 'no'} | {identity_details} | mapped |"
+            )
+        lines.extend(["", "## Coverage gaps", ""])
+        lines.extend([f"- {gap}" for gap in gaps] or ["- No obvious structural gaps from imported metadata."])
+        write_private(report_path, "\n".join(lines) + "\n")
+        connection.commit()
+        print(f"Mapped {len(endpoints)} endpoint(s) and {len(workflows)} workflow group(s).")
+        print(f"Coverage gaps: {len(gaps)}")
+        print(f"Map: {report_path.relative_to(ROOT)}")
+        print("Add business context with: ./redcode bugbounty workflow annotate --help")
+        return 0
+    finally:
+        connection.close()
+
+
+def priority_for(
+    endpoint: sqlite3.Row,
+    identities: list[sqlite3.Row],
+    workflow: dict[str, Any] | None,
+    program_duplicate_risk: int | None,
+) -> tuple[dict[str, int], int]:
+    has_object = "{id}" in endpoint["path_template"]
+    identity_count = len({str(identity["label"]) for identity in identities})
+    tenant_count = len({str(identity["tenant"]) for identity in identities if identity["tenant"]})
+    observations = sum(int(identity["observations"]) for identity in identities)
+    sensitivity = int(workflow["sensitivity"]) if workflow else inferred_workflow_sensitivity(
+        root_segment(endpoint["path_template"])
+    )
+    components = {
+        "boundary": 5 if has_object and tenant_count < 2 else (
+            4 if has_object or endpoint["state_change"] else 2
+        ),
+        "impact": min(5, max(2, sensitivity + (1 if endpoint["state_change"] else 0))),
+        "novelty": min(
+            5,
+            2 + int(identity_count < 2) + int(tenant_count < 2) + int(endpoint["coverage_status"] != "tested"),
+        ),
+        "evidence": min(5, 1 + min(2, identity_count) + int(observations >= 2)),
+        "duplicate_risk": 2 if program_duplicate_risk is None else int(program_duplicate_risk),
+        "test_cost": 1 if endpoint["method"] in {"GET", "HEAD", "OPTIONS"} else 2,
+        "operational_risk": min(5, 1 + int(endpoint["state_change"]) + sensitivity // 3),
+    }
+    return components, mappa_priority(components)
+
+
+def mappa_priority(components: dict[str, int]) -> int:
+    return (
+        3 * components["boundary"]
+        + 2 * components["impact"]
+        + 2 * components["novelty"]
+        + components["evidence"]
+        - 2 * components["duplicate_risk"]
+        - components["test_cost"]
+        - components["operational_risk"]
+    )
+
+
+def command_queue(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        program = get_program(connection, engagement_id)
+        created = 0
+        if args.generate:
+            identities_by_endpoint = endpoint_identity_context(connection, engagement_id)
+            workflows = existing_workflow_context(connection, engagement_id)
+            endpoints = connection.execute(
+                "SELECT * FROM endpoints WHERE engagement_id = ? "
+                "AND (state_change = 1 OR path_template LIKE '%{id}%')",
+                (engagement_id,),
+            ).fetchall()
+            for endpoint in endpoints:
+                identities = identities_by_endpoint.get(int(endpoint["id"]), [])
+                workflow = workflows.get(workflow_key_for(endpoint))
+                components, priority = priority_for(
+                    endpoint,
+                    identities,
+                    workflow,
+                    program["duplicate_risk"],
+                )
+                seed = f"{engagement_id}:{endpoint['id']}:ownership-boundary"
+                hypothesis_key = f"HYP-{hashlib.sha256(seed.encode()).hexdigest()[:10].upper()}"
+                actor_label = str(identities[0]["label"]) if identities else "authorized-user"
+                object_owner = (
+                    "different-authorized-tenant"
+                    if any(identity["tenant"] for identity in identities)
+                    else "different-authorized-user"
+                )
+                workflow_states = (workflow or {}).get("states", set()) - {"observed"}
+                object_state = sorted(workflow_states)[0] if workflow_states else "observed"
+                statement = (
+                    f"Verify that {actor_label} cannot access or alter a {object_owner} "
+                    f"object through {endpoint['method']} {endpoint['path_template']} "
+                    f"while it is in the {object_state} state."
+                )
+                cursor = connection.execute(
+                    "INSERT OR IGNORE INTO hypotheses "
+                    "(engagement_id, target_id, endpoint_id, workflow_id, hypothesis_id, statement, actor_label, "
+                    "action, object_owner, object_state, channel, boundary_score, impact_score, "
+                    "novelty_score, evidence_score, duplicate_risk, test_cost, operational_risk, priority) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'http', ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        engagement_id,
+                        endpoint["target_id"],
+                        endpoint["id"],
+                        workflow["id"] if workflow else None,
+                        hypothesis_key,
+                        statement,
+                        actor_label,
+                        endpoint["method"],
+                        object_owner,
+                        object_state,
+                        components["boundary"],
+                        components["impact"],
+                        components["novelty"],
+                        components["evidence"],
+                        components["duplicate_risk"],
+                        components["test_cost"],
+                        components["operational_risk"],
+                        priority,
+                    ),
+                )
+                if cursor.rowcount:
+                    created += 1
+                    row = connection.execute(
+                        "SELECT id FROM hypotheses WHERE hypothesis_id = ?", (hypothesis_key,)
+                    ).fetchone()
+                    assert row is not None
+                    record_hypothesis_event(
+                        connection,
+                        int(row["id"]),
+                        "created",
+                        to_status="queued",
+                        actor="bugbounty-control",
+                        details={"priority_components": components},
+                    )
+        rows = connection.execute(
+            "SELECT h.*, e.host, e.method, e.path_template FROM hypotheses h "
+            "LEFT JOIN endpoints e ON e.id = h.endpoint_id "
+            "WHERE h.engagement_id = ? AND h.status IN ('queued', 'approved', 'testing', 'candidate') "
+            "ORDER BY h.priority DESC, h.created_at ASC LIMIT ?",
+            (engagement_id, args.limit),
+        ).fetchall()
+        connection.commit()
+        if created:
+            print(f"Generated {created} new MAPPA hypothesis/hypotheses.")
+        if not rows:
+            print("No active MAPPA hypotheses. Import selected Burp traffic and run map/queue --generate.")
+            return 0
+        print("MAPPA queue")
+        for row in rows:
+            print(
+                f"- {row['hypothesis_id']} [{row['status']}, priority {row['priority']}]: "
+                f"{row['method']} {row['host']}{row['path_template']}\n"
+                f"  Why: boundary={row['boundary_score']}, impact={row['impact_score']}, "
+                f"novelty={row['novelty_score']}, evidence={row['evidence_score']}; "
+                f"duplicate risk={row['duplicate_risk']}, cost={row['test_cost']}, "
+                f"operational risk={row['operational_risk']}\n"
+                f"  Context: actor={row['actor_label'] or '-'}, owner={row['object_owner'] or '-'}, "
+                f"state={row['object_state'] or '-'}, channel={row['channel'] or '-'}\n"
+                f"  {row['statement']}"
+            )
+        return 0
+    finally:
+        connection.close()
+
+
+def workflow_annotation_target(
+    connection: sqlite3.Connection, engagement_id: int, host: str, name: str
+) -> int:
+    endpoints = connection.execute(
+        "SELECT target_id, path_template FROM endpoints WHERE engagement_id = ? AND host = ?",
+        (engagement_id, host.lower()),
+    ).fetchall()
+    for endpoint in endpoints:
+        if root_segment(endpoint["path_template"]) == name:
+            return int(endpoint["target_id"])
+    raise BugBountyError("workflow is not represented by a mapped endpoint; run ingest and map first")
+
+
+def command_workflow_annotate(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        get_program(connection, engagement_id)
+        host = control.target_parts(args.host)[0]
+        name = require_label(args.name, "workflow name")
+        target_id = workflow_annotation_target(connection, engagement_id, host, name)
+        require_policy_action(connection, manifest, engagement_id, host, "hunt")
+        for label in args.actor or []:
+            identity_row(connection, engagement_id, label)
+        key = f"{host}:{name}"
+        existing = connection.execute(
+            "SELECT * FROM application_workflows WHERE engagement_id = ? AND workflow_key = ?",
+            (engagement_id, key),
+        ).fetchone()
+        existing_actors = json_string_set(existing["actors_json"]) if existing else set()
+        existing_objects = json_string_set(existing["objects_json"]) if existing else set()
+        existing_states = json_string_set(existing["states_json"]) if existing else {"observed"}
+        objects = {require_label(value, "object") for value in args.object or []}
+        states = {require_label(value, "state") for value in args.state or []}
+        sensitivity = args.sensitivity
+        if sensitivity is None:
+            sensitivity = int(existing["sensitivity"]) if existing else inferred_workflow_sensitivity(name)
+        connection.execute(
+            "INSERT INTO application_workflows "
+            "(engagement_id, target_id, workflow_key, name, states_json, actors_json, objects_json, sensitivity, notes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(engagement_id, workflow_key) DO UPDATE SET "
+            "target_id=excluded.target_id, name=excluded.name, states_json=excluded.states_json, "
+            "actors_json=excluded.actors_json, objects_json=excluded.objects_json, "
+            "sensitivity=excluded.sensitivity, notes=excluded.notes, updated_at=datetime('now')",
+            (
+                engagement_id,
+                target_id,
+                key,
+                f"{host} / {name}",
+                canonical_json(sorted(existing_states | states)),
+                canonical_json(sorted(existing_actors | set(args.actor or []))),
+                canonical_json(sorted(existing_objects | objects)),
+                sensitivity,
+                args.notes if args.notes is not None else (existing["notes"] if existing else None),
+            ),
+        )
+        connection.commit()
+        print(f"Workflow annotated: {key} (sensitivity {sensitivity}/5).")
+        return 0
+    finally:
+        connection.close()
+
+
+def endpoint_row(connection: sqlite3.Connection, engagement_id: int, endpoint_id: int) -> sqlite3.Row:
+    row = connection.execute(
+        "SELECT * FROM endpoints WHERE engagement_id = ? AND id = ?", (engagement_id, endpoint_id)
+    ).fetchone()
+    if row is None:
+        raise BugBountyError(f"endpoint not found: {endpoint_id}")
+    return row
+
+
+def command_hypothesis_add(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        program = get_program(connection, engagement_id)
+        endpoint = endpoint_row(connection, engagement_id, args.endpoint_id)
+        target = f"{endpoint['protocol']}://{endpoint['host']}{endpoint['path_template']}"
+        require_policy_action(connection, manifest, engagement_id, target, "hunt")
+        identity_row(connection, engagement_id, args.actor)
+        if len(args.statement.strip()) > 2000:
+            raise BugBountyError("hypothesis statement must be at most 2000 characters")
+        identities = endpoint_identity_context(connection, engagement_id).get(int(endpoint["id"]), [])
+        workflow = existing_workflow_context(connection, engagement_id).get(workflow_key_for(endpoint))
+        components, _ = priority_for(endpoint, identities, workflow, program["duplicate_risk"])
+        overrides = {
+            "boundary": args.boundary_score,
+            "impact": args.impact_score,
+            "novelty": args.novelty_score,
+            "evidence": args.evidence_score,
+            "duplicate_risk": args.duplicate_risk,
+            "test_cost": args.test_cost,
+            "operational_risk": args.operational_risk,
+        }
+        for key, value in overrides.items():
+            if value is not None:
+                components[key] = value
+        priority = mappa_priority(components)
+        seed = canonical_json(
+            {
+                "engagement": engagement_id,
+                "endpoint": int(endpoint["id"]),
+                "statement": args.statement.strip(),
+                "actor": args.actor,
+                "owner": args.object_owner,
+                "state": args.object_state,
+                "channel": args.channel,
+            }
+        )
+        hypothesis_key = f"HYP-{hashlib.sha256(seed.encode()).hexdigest()[:10].upper()}"
+        cursor = connection.execute(
+            "INSERT OR IGNORE INTO hypotheses "
+            "(engagement_id, target_id, endpoint_id, workflow_id, hypothesis_id, statement, actor_label, "
+            "action, object_owner, object_state, channel, boundary_score, impact_score, novelty_score, "
+            "evidence_score, duplicate_risk, test_cost, operational_risk, priority) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                engagement_id,
+                endpoint["target_id"],
+                endpoint["id"],
+                workflow["id"] if workflow else None,
+                hypothesis_key,
+                args.statement.strip(),
+                args.actor,
+                args.action or endpoint["method"],
+                args.object_owner,
+                args.object_state,
+                args.channel,
+                components["boundary"],
+                components["impact"],
+                components["novelty"],
+                components["evidence"],
+                components["duplicate_risk"],
+                components["test_cost"],
+                components["operational_risk"],
+                priority,
+            ),
+        )
+        if cursor.rowcount:
+            row = connection.execute(
+                "SELECT id FROM hypotheses WHERE hypothesis_id = ?", (hypothesis_key,)
+            ).fetchone()
+            assert row is not None
+            record_hypothesis_event(
+                connection,
+                int(row["id"]),
+                "created-manual",
+                to_status="queued",
+                actor=args.created_by,
+                details={"priority_components": components},
+            )
+            print(f"Added MAPPA hypothesis {hypothesis_key} (priority {priority}).")
+        else:
+            print(f"MAPPA hypothesis already exists: {hypothesis_key}.")
+        connection.commit()
+        return 0
+    finally:
+        connection.close()
+
+
+def hypothesis_with_endpoint(
+    connection: sqlite3.Connection, engagement_id: int, hypothesis_key: str
+) -> sqlite3.Row:
+    row = connection.execute(
+        "SELECT h.*, e.host, e.method AS endpoint_method, e.path_template, e.protocol "
+        "FROM hypotheses h JOIN endpoints e ON e.id = h.endpoint_id "
+        "WHERE h.engagement_id = ? AND h.hypothesis_id = ?",
+        (engagement_id, hypothesis_key),
+    ).fetchone()
+    if row is None:
+        raise BugBountyError(f"hypothesis not found: {hypothesis_key}")
+    return row
+
+
+def command_plan_create(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        hypothesis = hypothesis_with_endpoint(connection, engagement_id, args.hypothesis)
+        if hypothesis["status"] != "queued":
+            raise BugBountyError(
+                f"a test plan can be created only for a queued hypothesis (current: {hypothesis['status']})"
+            )
+        active_plan = connection.execute(
+            "SELECT id FROM test_plans WHERE hypothesis_id = ? AND status IN ('approved', 'testing')",
+            (hypothesis["id"],),
+        ).fetchone()
+        if active_plan is not None:
+            raise BugBountyError(
+                f"hypothesis already has active plan {active_plan['id']}; complete, cancel, or wait for it to expire"
+            )
+        target = f"{hypothesis['protocol']}://{hypothesis['host']}{hypothesis['path_template']}"
+        require_policy_action(connection, manifest, engagement_id, target, args.action)
+        if args.identity:
+            identity_row(connection, engagement_id, args.identity)
+        snapshot = policy_snapshot(connection, engagement_id)
+        plan = {
+            "hypothesis_id": hypothesis["hypothesis_id"],
+            "target": target,
+            "method": hypothesis["endpoint_method"],
+            "identity": args.identity,
+            "action": args.action,
+            "control": args.control,
+            "single_change": args.single_change,
+            "expected_result": args.expected_result,
+            "minimum_proof": args.minimum_proof,
+            "stop_condition": args.stop_condition,
+            "cleanup": args.cleanup,
+            "max_requests": args.max_requests,
+        }
+        plan_json = canonical_json(plan)
+        plan_hash = sha256_bytes(plan_json.encode("utf-8"))
+        connection.execute(
+            "UPDATE test_plans SET status = 'superseded', updated_at = datetime('now') "
+            "WHERE hypothesis_id = ? AND status = 'draft'",
+            (hypothesis["id"],),
+        )
+        connection.execute(
+            "INSERT INTO test_plans "
+            "(engagement_id, hypothesis_id, policy_snapshot_id, action, target, method, path_template, identity_label, "
+            "max_requests, rate_limit_per_second, plan_json, plan_sha256) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                engagement_id,
+                hypothesis["id"],
+                snapshot["id"],
+                args.action,
+                target,
+                hypothesis["endpoint_method"],
+                hypothesis["path_template"],
+                args.identity,
+                args.max_requests,
+                manifest.get("rate_limit_per_second", 10),
+                plan_json,
+                plan_hash,
+            ),
+        )
+        plan_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
+        record_hypothesis_event(
+            connection,
+            int(hypothesis["id"]),
+            "plan-created",
+            from_status=hypothesis["status"],
+            to_status=hypothesis["status"],
+            actor=args.created_by,
+            details={"plan_id": plan_id, "plan_sha256": plan_hash},
+        )
+        connection.commit()
+        print(f"Draft test plan {plan_id} created for {hypothesis['hypothesis_id']}.")
+        print(f"Plan hash: {plan_hash}")
+        print("Review the plan, then approve it with the exact hash as --confirm.")
+        return 0
+    finally:
+        connection.close()
+
+
+def plan_row(connection: sqlite3.Connection, engagement_id: int, plan_id: int) -> sqlite3.Row:
+    row = connection.execute(
+        "SELECT p.*, h.hypothesis_id, h.status AS hypothesis_status, h.id AS hypothesis_db_id "
+        "FROM test_plans p JOIN hypotheses h ON h.id = p.hypothesis_id "
+        "WHERE p.engagement_id = ? AND p.id = ?",
+        (engagement_id, plan_id),
+    ).fetchone()
+    if row is None:
+        raise BugBountyError(f"test plan not found: {plan_id}")
+    return row
+
+
+def require_current_plan_policy(
+    connection: sqlite3.Connection, engagement_id: int, plan: sqlite3.Row
+) -> None:
+    snapshot = policy_snapshot(connection, engagement_id)
+    if plan["policy_snapshot_id"] != snapshot["id"]:
+        raise BugBountyError("test plan was created under a superseded policy snapshot")
+
+
+def plan_is_expired(plan: sqlite3.Row) -> bool:
+    try:
+        expires_at = dt.datetime.fromisoformat(plan["expires_at"] or "")
+    except ValueError as error:
+        raise BugBountyError("test plan has an invalid approval expiry") from error
+    return expires_at <= utc_now()
+
+
+def expire_plan(connection: sqlite3.Connection, plan: sqlite3.Row, actor: str) -> None:
+    """Close a stale authorization and return its hypothesis to the queue."""
+    connection.execute(
+        "UPDATE approval_executions SET status = 'cancelled', completed_at = datetime('now'), "
+        "result_summary = COALESCE(result_summary, 'Cancelled because the plan approval expired') "
+        "WHERE test_plan_id = ? AND status = 'started'",
+        (plan["id"],),
+    )
+    connection.execute(
+        "UPDATE test_plans SET status = 'expired', updated_at = datetime('now') WHERE id = ?",
+        (plan["id"],),
+    )
+    if plan["hypothesis_status"] in {"approved", "testing"}:
+        connection.execute("UPDATE hypotheses SET status = 'queued' WHERE id = ?", (plan["hypothesis_db_id"],))
+        record_hypothesis_event(
+            connection,
+            int(plan["hypothesis_db_id"]),
+            "approval-expired",
+            from_status=plan["hypothesis_status"],
+            to_status="queued",
+            actor=actor,
+            details={"plan_id": plan["id"]},
+        )
+
+
+def verified_candidate_evidence(
+    connection: sqlite3.Connection, hypothesis: sqlite3.Row
+) -> list[str]:
+    """Return only evidence still bound to a completed approved execution."""
+    try:
+        evidence_paths = json.loads(hypothesis["evidence_refs"] or "[]")
+    except json.JSONDecodeError as error:
+        raise BugBountyError("candidate evidence references are invalid") from error
+    if not isinstance(evidence_paths, list) or not evidence_paths or any(
+        not isinstance(path, str) for path in evidence_paths
+    ):
+        raise BugBountyError("confirmation requires an evidence reference")
+
+    verified: list[str] = []
+    for relative_path in evidence_paths:
+        evidence_path = (ROOT / relative_path).resolve()
+        if not is_within(evidence_path, ROOT / "output") or not evidence_path.is_file():
+            raise BugBountyError("candidate evidence is missing or outside output/")
+        digest = sha256_path(evidence_path)
+        evidence_row = connection.execute(
+            "SELECT sha256 FROM evidence WHERE path = ?", (relative_path,)
+        ).fetchone()
+        execution_row = connection.execute(
+            "SELECT e.evidence_sha256 FROM approval_executions e "
+            "JOIN test_plans p ON p.id = e.test_plan_id "
+            "WHERE p.hypothesis_id = ? AND e.status = 'completed' "
+            "AND e.evidence_path = ? AND e.evidence_sha256 = ? "
+            "ORDER BY e.completed_at DESC LIMIT 1",
+            (hypothesis["id"], relative_path, digest),
+        ).fetchone()
+        if (
+            evidence_row is None
+            or evidence_row["sha256"] != digest
+            or execution_row is None
+            or execution_row["evidence_sha256"] != digest
+        ):
+            raise BugBountyError(
+                "candidate evidence no longer matches its approved execution record"
+            )
+        verified.append(relative_path)
+    return verified
+
+
+def command_plan_show(args: argparse.Namespace) -> int:
+    connection, _, _, engagement_id = connect(args)
+    try:
+        row = plan_row(connection, engagement_id, args.plan_id)
+        print(json.dumps(json.loads(row["plan_json"]), indent=2, ensure_ascii=False))
+        print(f"status: {row['status']}")
+        print(f"hash: {row['plan_sha256']}")
+        return 0
+    finally:
+        connection.close()
+
+
+def command_approve(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        plan = plan_row(connection, engagement_id, args.plan_id)
+        if plan["status"] != "draft":
+            raise BugBountyError(f"only a draft plan can be approved (current: {plan['status']})")
+        if plan["hypothesis_status"] != "queued":
+            raise BugBountyError(
+                f"plan hypothesis must still be queued before approval (current: {plan['hypothesis_status']})"
+            )
+        if args.confirm != plan["plan_sha256"]:
+            raise BugBountyError("--confirm must exactly match the displayed immutable plan hash")
+        require_current_plan_policy(connection, engagement_id, plan)
+        require_policy_action(connection, manifest, engagement_id, plan["target"], plan["action"])
+        expires_at = utc_now() + dt.timedelta(hours=args.expires_hours)
+        connection.execute(
+            "INSERT INTO approvals (engagement_id, action, scope, approved_by, approved_at, expires_at, notes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                engagement_id,
+                plan["action"],
+                plan["target"],
+                args.approved_by,
+                utc_text(),
+                utc_text(expires_at),
+                f"Test plan {plan['id']} SHA-256 {plan['plan_sha256']}",
+            ),
+        )
+        approval_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
+        connection.execute(
+            "UPDATE test_plans SET status = 'approved', approval_id = ?, approved_by = ?, "
+            "approved_at = ?, expires_at = ?, updated_at = datetime('now') WHERE id = ?",
+            (approval_id, args.approved_by, utc_text(), utc_text(expires_at), plan["id"]),
+        )
+        connection.execute("UPDATE hypotheses SET status = 'approved' WHERE id = ?", (plan["hypothesis_db_id"],))
+        record_hypothesis_event(
+            connection,
+            int(plan["hypothesis_db_id"]),
+            "approved",
+            from_status=plan["hypothesis_status"],
+            to_status="approved",
+            actor=args.approved_by,
+            details={"plan_id": plan["id"], "approval_id": approval_id, "expires_at": utc_text(expires_at)},
+        )
+        connection.commit()
+        print(f"Approved plan {plan['id']} until {utc_text(expires_at)}.")
+        print("Before any reviewed Repeater action, run begin-test and obey the plan exactly.")
+        return 0
+    finally:
+        connection.close()
+
+
+def command_begin_test(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        plan = plan_row(connection, engagement_id, args.plan_id)
+        if plan["status"] != "approved":
+            raise BugBountyError(f"plan is not approved (current: {plan['status']})")
+        if plan_is_expired(plan):
+            expire_plan(connection, plan, args.operator)
+            connection.commit()
+            raise BugBountyError("plan approval has expired")
+        require_current_plan_policy(connection, engagement_id, plan)
+        require_policy_action(connection, manifest, engagement_id, plan["target"], plan["action"])
+        connection.execute("UPDATE test_plans SET status = 'testing' WHERE id = ?", (plan["id"],))
+        connection.execute("UPDATE hypotheses SET status = 'testing' WHERE id = ?", (plan["hypothesis_db_id"],))
+        connection.execute("INSERT INTO approval_executions (test_plan_id) VALUES (?)", (plan["id"],))
+        execution_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
+        record_hypothesis_event(
+            connection,
+            int(plan["hypothesis_db_id"]),
+            "testing-started",
+            from_status=plan["hypothesis_status"],
+            to_status="testing",
+            actor=args.operator,
+            details={"plan_id": plan["id"], "execution_id": execution_id},
+        )
+        connection.commit()
+        print(f"Test authorization recorded: execution {execution_id}, plan {plan['id']}.")
+        print(f"Allowed maximum: {plan['max_requests']} request(s) at {plan['rate_limit_per_second']} request(s)/second.")
+        print("This record does not bypass the program policy or authorize any action outside the plan.")
+        return 0
+    finally:
+        connection.close()
+
+
+def command_record(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        plan = plan_row(connection, engagement_id, args.plan_id)
+        if plan["status"] != "testing":
+            raise BugBountyError("recording requires a test plan in testing state")
+        if plan_is_expired(plan):
+            expire_plan(connection, plan, args.operator)
+            connection.commit()
+            raise BugBountyError("plan approval has expired; its active execution was cancelled")
+        if args.request_count > plan["max_requests"]:
+            raise BugBountyError("request count exceeds the approved maximum")
+        require_current_plan_policy(connection, engagement_id, plan)
+        require_policy_action(connection, manifest, engagement_id, plan["target"], plan["action"])
+        evidence_path = Path(args.evidence).expanduser().resolve()
+        if not evidence_path.is_file():
+            raise BugBountyError(f"evidence file not found: {evidence_path}")
+        if not is_within(evidence_path, ROOT / "output"):
+            raise BugBountyError("evidence must be saved under the ignored output/ directory")
+        evidence_hash = sha256_path(evidence_path)
+        execution = connection.execute(
+            "SELECT id FROM approval_executions WHERE test_plan_id = ? AND status = 'started' "
+            "ORDER BY started_at DESC LIMIT 1",
+            (plan["id"],),
+        ).fetchone()
+        if execution is None:
+            raise BugBountyError("no active execution record exists for this plan")
+        outcome_status = "informative" if args.outcome == "blocked" else args.outcome
+        if outcome_status not in {"candidate", "rejected", "duplicate", "informative"}:
+            raise BugBountyError("invalid recorded outcome")
+        relative_path = str(evidence_path.relative_to(ROOT))
+        connection.execute(
+            "UPDATE approval_executions SET status = 'completed', request_count = ?, evidence_path = ?, "
+            "evidence_sha256 = ?, result_summary = ?, completed_at = datetime('now') WHERE id = ?",
+            (args.request_count, relative_path, evidence_hash, args.summary, execution["id"]),
+        )
+        connection.execute(
+            "UPDATE test_plans SET status = 'completed', updated_at = datetime('now') WHERE id = ?",
+            (plan["id"],),
+        )
+        connection.execute(
+            "UPDATE hypotheses SET status = ?, evidence_refs = ?, notes = ? WHERE id = ?",
+            (
+                outcome_status,
+                canonical_json([relative_path]),
+                args.summary,
+                plan["hypothesis_db_id"],
+            ),
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO evidence (path, sha256, mime_type, size_bytes, notes) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                relative_path,
+                evidence_hash,
+                "text/plain",
+                evidence_path.stat().st_size,
+                f"Bug-bounty test plan {plan['id']}",
+            ),
+        )
+        record_hypothesis_event(
+            connection,
+            int(plan["hypothesis_db_id"]),
+            "test-recorded",
+            from_status="testing",
+            to_status=outcome_status,
+            actor=args.operator,
+            details={"plan_id": plan["id"], "execution_id": execution["id"], "evidence": relative_path},
+        )
+        connection.commit()
+        print(f"Recorded {outcome_status} outcome for {plan['hypothesis_id']}.")
+        if outcome_status == "candidate":
+            print("Review the evidence and use confirm only after minimum impact is established.")
+        return 0
+    finally:
+        connection.close()
+
+
+def command_confirm(args: argparse.Namespace) -> int:
+    connection, _, _, engagement_id = connect(args)
+    try:
+        hypothesis = hypothesis_with_endpoint(connection, engagement_id, args.hypothesis)
+        if hypothesis["status"] != "candidate":
+            raise BugBountyError("only a candidate hypothesis can be confirmed")
+        evidence = verified_candidate_evidence(connection, hypothesis)
+        finding_key = f"BB-{hypothesis['hypothesis_id']}"
+        connection.execute(
+            "INSERT INTO findings "
+            "(engagement_id, target_id, finding_id, phase, type, severity, title, url, evidence, confidence, status, raw_path) "
+            "VALUES (?, ?, ?, 'exploit', 'bug-bounty', ?, ?, ?, ?, 'confirmed', 'confirmed', ?) "
+            "ON CONFLICT(finding_id) DO UPDATE SET severity=excluded.severity, title=excluded.title, "
+            "evidence=excluded.evidence, status='confirmed', confidence='confirmed', raw_path=excluded.raw_path, "
+            "updated_at=datetime('now')",
+            (
+                engagement_id,
+                hypothesis["target_id"],
+                finding_key,
+                args.severity,
+                args.title,
+                f"{hypothesis['protocol']}://{hypothesis['host']}{hypothesis['path_template']}",
+                args.impact,
+                evidence[0],
+            ),
+        )
+        connection.execute("UPDATE hypotheses SET status = 'confirmed' WHERE id = ?", (hypothesis["id"],))
+        connection.execute(
+            "UPDATE hunt_sessions SET findings_confirmed = findings_confirmed + 1 "
+            "WHERE id = (SELECT id FROM hunt_sessions WHERE engagement_id = ? "
+            "AND status = 'running' ORDER BY started_at DESC LIMIT 1)",
+            (engagement_id,),
+        )
+        record_hypothesis_event(
+            connection,
+            int(hypothesis["id"]),
+            "confirmed",
+            from_status="candidate",
+            to_status="confirmed",
+            actor=args.reviewed_by,
+            details={"finding_id": finding_key, "impact": args.impact},
+        )
+        connection.commit()
+        print(f"Confirmed finding {finding_key}. Submission remains a manual analyst action.")
+        return 0
+    finally:
+        connection.close()
+
+
+def command_report(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        hypothesis = hypothesis_with_endpoint(connection, engagement_id, args.hypothesis)
+        if hypothesis["status"] != "confirmed":
+            raise BugBountyError("a report draft requires a confirmed hypothesis")
+        finding = connection.execute(
+            "SELECT * FROM findings WHERE engagement_id = ? AND finding_id = ?",
+            (engagement_id, f"BB-{hypothesis['hypothesis_id']}"),
+        ).fetchone()
+        if finding is None:
+            raise BugBountyError("confirmed hypothesis has no corresponding finding")
+        program = get_program(connection, engagement_id)
+        evidence = verified_candidate_evidence(connection, hypothesis)
+        report_dir = ROOT / "output" / manifest["name"] / "reports"
+        report_path = report_dir / f"{hypothesis['hypothesis_id'].lower()}-{args.format}-draft.md"
+        template = [
+            f"# {finding['title']}",
+            "",
+            f"**Program:** {program['program_name']}",
+            f"**Severity (analyst assessed):** {finding['severity']}",
+            f"**Affected endpoint:** {finding['url']}",
+            "",
+            "## Summary",
+            "",
+            finding["evidence"] or "Impact evidence is recorded in the attached artifact.",
+            "",
+            "## Reproduction",
+            "",
+            "Use the saved, analyst-approved test plan and the redacted evidence bundle. "
+            "Do not include live credentials, tokens, cookies, or unrelated user data.",
+            "",
+            "## Evidence",
+            "",
+        ]
+        template.extend([f"- `{path}`" for path in evidence])
+        template.extend(
+            [
+                "",
+                "## Remediation",
+                "",
+                "Enforce authorization on the server for the requested object and action; "
+                "derive authorization from the authenticated identity rather than client-controlled identifiers.",
+                "",
+                "## Submission status",
+                "",
+                "Draft only. RedCode does not submit findings to a bug-bounty platform.",
+            ]
+        )
+        write_private(report_path, "\n".join(template) + "\n")
+        finding_id = int(finding["id"])
+        connection.execute(
+            "INSERT INTO bug_bounty_submissions (engagement_id, finding_id, platform, status, notes) "
+            "VALUES (?, ?, ?, 'draft', ?)",
+            (engagement_id, finding_id, args.format, f"Draft at {report_path.relative_to(ROOT)}"),
+        )
+        connection.commit()
+        print(f"Draft report: {report_path.relative_to(ROOT)}")
+        print("Review, redact, and submit it manually through the program platform.")
+        return 0
+    finally:
+        connection.close()
+
+
+def command_status(args: argparse.Namespace) -> int:
+    connection, _, _, engagement_id = connect(args)
+    try:
+        program = get_program(connection, engagement_id)
+        policy = policy_snapshot(connection, engagement_id)
+        endpoint_count = connection.execute(
+            "SELECT COUNT(*) FROM endpoints WHERE engagement_id = ?", (engagement_id,)
+        ).fetchone()[0]
+        identity_count = connection.execute(
+            "SELECT COUNT(*) FROM identities WHERE engagement_id = ?", (engagement_id,)
+        ).fetchone()[0]
+        hypothesis_counts = connection.execute(
+            "SELECT status, COUNT(*) AS count FROM hypotheses WHERE engagement_id = ? GROUP BY status",
+            (engagement_id,),
+        ).fetchall()
+        import_row = connection.execute(
+            "SELECT * FROM burp_import_runs WHERE engagement_id = ? ORDER BY id DESC LIMIT 1",
+            (engagement_id,),
+        ).fetchone()
+        top = connection.execute(
+            "SELECT hypothesis_id, priority, statement FROM hypotheses WHERE engagement_id = ? "
+            "AND status = 'queued' ORDER BY priority DESC LIMIT 3",
+            (engagement_id,),
+        ).fetchall()
+        print(f"Program: {program['program_name']} ({program['platform']})")
+        print(f"Reviewed policy: {policy['reviewed_at']} ({policy['snapshot_path']})")
+        print(f"Map: {endpoint_count} endpoint(s), {identity_count} symbolic identity/identities")
+        if import_row:
+            print(
+                f"Latest Burp import: #{import_row['id']} {import_row['status']} "
+                f"({import_row['messages_imported']} imported, {import_row['messages_skipped']} skipped)"
+            )
+        else:
+            print("Latest Burp import: none")
+        print("Hypotheses: " + ", ".join(f"{row['status']}={row['count']}" for row in hypothesis_counts))
+        if top:
+            print("Next candidates:")
+            for row in top:
+                print(f"- {row['hypothesis_id']} (priority {row['priority']}): {row['statement']}")
+        return 0
+    finally:
+        connection.close()
+
+
+def command_session(args: argparse.Namespace) -> int:
+    connection, _, _, engagement_id = connect(args)
+    try:
+        row = connection.execute(
+            "SELECT id, status FROM hunt_sessions WHERE engagement_id = ? AND status = 'running' "
+            "ORDER BY started_at DESC LIMIT 1",
+            (engagement_id,),
+        ).fetchone()
+        if row is None:
+            raise BugBountyError("no running hunt session exists")
+        connection.execute(
+            "UPDATE hunt_sessions SET status = ?, notes = ?, ended_at = datetime('now') WHERE id = ?",
+            (args.status, args.notes, row["id"]),
+        )
+        connection.commit()
+        print(f"Hunt session {row['id']} marked {args.status}.")
+        return 0
+    finally:
+        connection.close()
+
+
+def mcp_response_payload(raw: bytes) -> dict[str, Any]:
+    text = raw.decode("utf-8", errors="replace").strip()
+    if text.startswith("data:"):
+        pieces = [line[5:].strip() for line in text.splitlines() if line.startswith("data:")]
+        text = "\n".join(pieces)
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise BugBountyError("Burp MCP returned a non-JSON response") from error
+    if not isinstance(value, dict):
+        raise BugBountyError("Burp MCP returned an invalid JSON-RPC response")
+    if "error" in value:
+        raise BugBountyError(f"Burp MCP error: {value['error']}")
+    return value
+
+
+def mcp_post(
+    url: str,
+    payload: dict[str, Any],
+    session_id: str | None = None,
+    *,
+    allow_empty_response: bool = False,
+) -> tuple[dict[str, Any], str | None]:
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    if session_id:
+        headers["Mcp-Session-Id"] = session_id
+    request = Request(url, data=canonical_json(payload).encode("utf-8"), headers=headers, method="POST")
+    try:
+        with urlopen(request, timeout=10) as response:
+            body = response.read()
+            if not body and allow_empty_response:
+                return {}, response.headers.get("Mcp-Session-Id") or session_id
+            return mcp_response_payload(body), response.headers.get("Mcp-Session-Id") or session_id
+    except (HTTPError, URLError, TimeoutError, OSError) as error:
+        raise BugBountyError(f"Burp MCP request failed: {error}") from error
+
+
+def command_burp_probe(args: argparse.Namespace) -> int:
+    url = args.url or os.environ.get("BURP_MCP_URL")
+    if not url:
+        raise BugBountyError("BURP_MCP_URL is not configured")
+    initialized, session_id = mcp_post(
+        url,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "redcode-bugbounty", "version": "1"},
+            },
+        },
+    )
+    mcp_post(
+        url,
+        {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+        session_id,
+        allow_empty_response=True,
+    )
+    tools, _ = mcp_post(
+        url,
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+        session_id,
+    )
+    names = sorted(
+        str(item.get("name"))
+        for item in tools.get("result", {}).get("tools", [])
+        if isinstance(item, dict) and item.get("name")
+    )
+    missing = sorted(set(args.require_tool or []) - set(names))
+    server_info = initialized.get("result", {}).get("serverInfo", {})
+    print(f"Burp MCP: {server_info.get('name', 'unknown')} {server_info.get('version', '')}".strip())
+    print("Tools: " + (", ".join(names) if names else "none reported"))
+    if missing:
+        print("Missing required tools: " + ", ".join(missing), file=sys.stderr)
+        return 1
+    return 0
+
+
+def add_common_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--db", help="SQLite database path")
+    parser.add_argument("--manifest", help="engagement manifest path")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="redcode bugbounty", description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    onboard = subparsers.add_parser("onboard", help="save a reviewed program-policy snapshot")
+    add_common_arguments(onboard)
+    onboard.add_argument("--platform", default="hackerone")
+    onboard.add_argument("--program-name", required=True)
+    onboard.add_argument("--program-url")
+    onboard.add_argument("--policy-url")
+    onboard.add_argument("--policy-file", required=True)
+    onboard.add_argument("--scope", action="append", required=True, help="reviewed policy allow rule")
+    onboard.add_argument("--out-of-scope", action="append", help="reviewed policy exclusion")
+    onboard.add_argument("--prohibit-action", action="append", choices=sorted(control.ACTIONS | {"all"}))
+    onboard.add_argument("--restriction-reason")
+    onboard.add_argument("--reviewed-by", required=True)
+    onboard.add_argument("--policy-notes")
+    onboard.add_argument("--objective")
+    onboard.add_argument("--currency")
+    onboard.add_argument("--minimum-bounty", type=float)
+    onboard.add_argument("--maximum-bounty", type=float)
+    onboard.add_argument("--duplicate-risk", type=int, choices=range(0, 6))
+    onboard.add_argument("--account-requirements")
+    onboard.add_argument("--notes")
+    onboard.set_defaults(func=command_onboard)
+
+    identity = subparsers.add_parser("identity", help="manage symbolic test identities")
+    identity_subparsers = identity.add_subparsers(dest="identity_command", required=True)
+    identity_add = identity_subparsers.add_parser("add", help="add or update a symbolic identity")
+    add_common_arguments(identity_add)
+    identity_add.add_argument("--label", required=True)
+    identity_add.add_argument("--target")
+    identity_add.add_argument("--tenant")
+    identity_add.add_argument("--role")
+    identity_add.add_argument("--auth-state", choices=("anonymous", "authenticated", "limited"), default="authenticated")
+    identity_add.add_argument("--burp-label")
+    identity_add.add_argument("--notes")
+    identity_add.set_defaults(func=command_identity_add)
+
+    check = subparsers.add_parser("check", help="intersect manifest and reviewed policy scope")
+    add_common_arguments(check)
+    check.add_argument("target")
+    check.add_argument("action", choices=sorted(control.ACTIONS))
+    check.set_defaults(func=command_check)
+
+    ingest = subparsers.add_parser("ingest", help="import a selected Burp JSON or JSONL export")
+    add_common_arguments(ingest)
+    ingest.add_argument("--file", required=True)
+    ingest.add_argument("--identity", default="anon")
+    ingest.add_argument("--source-kind", choices=("history", "site_map", "export"), default="export")
+    ingest.add_argument("--cursor")
+    ingest.add_argument("--include-bodies", action="store_true", help="save redacted request structures")
+    ingest.set_defaults(func=command_ingest)
+
+    map_command = subparsers.add_parser("map", help="derive a persistent endpoint/workflow map")
+    add_common_arguments(map_command)
+    map_command.set_defaults(func=command_map)
+
+    workflow = subparsers.add_parser(
+        "workflow", help="add analyst-reviewed business context to a mapped workflow"
+    )
+    workflow_subparsers = workflow.add_subparsers(dest="workflow_command", required=True)
+    workflow_annotate = workflow_subparsers.add_parser(
+        "annotate", help="merge symbolic actors, objects, states, and sensitivity"
+    )
+    add_common_arguments(workflow_annotate)
+    workflow_annotate.add_argument("--host", required=True)
+    workflow_annotate.add_argument("--name", required=True, help="mapped first path segment")
+    workflow_annotate.add_argument("--actor", action="append", help="existing symbolic identity label")
+    workflow_annotate.add_argument("--object", action="append", help="safe object type label")
+    workflow_annotate.add_argument("--state", action="append", help="safe lifecycle-state label")
+    workflow_annotate.add_argument("--sensitivity", type=int, choices=range(0, 6))
+    workflow_annotate.add_argument("--notes")
+    workflow_annotate.set_defaults(func=command_workflow_annotate)
+
+    queue = subparsers.add_parser("queue", help="show or generate MAPPA hypotheses")
+    add_common_arguments(queue)
+    queue.add_argument("--generate", action="store_true")
+    queue.add_argument("--limit", type=int, default=10)
+    queue.set_defaults(func=command_queue)
+
+    hypothesis = subparsers.add_parser(
+        "hypothesis", help="add a specific analyst-reviewed MAPPA hypothesis"
+    )
+    hypothesis_subparsers = hypothesis.add_subparsers(dest="hypothesis_command", required=True)
+    hypothesis_add = hypothesis_subparsers.add_parser(
+        "add", help="add a contextual hypothesis for an already mapped endpoint"
+    )
+    add_common_arguments(hypothesis_add)
+    hypothesis_add.add_argument("--endpoint-id", type=int, required=True)
+    hypothesis_add.add_argument("--statement", required=True)
+    hypothesis_add.add_argument("--actor", required=True, help="existing symbolic identity label")
+    hypothesis_add.add_argument("--action", help="short action label; defaults to the endpoint method")
+    hypothesis_add.add_argument("--object-owner", required=True)
+    hypothesis_add.add_argument("--object-state", required=True)
+    hypothesis_add.add_argument("--channel", default="http")
+    hypothesis_add.add_argument("--boundary-score", type=int, choices=range(0, 6))
+    hypothesis_add.add_argument("--impact-score", type=int, choices=range(0, 6))
+    hypothesis_add.add_argument("--novelty-score", type=int, choices=range(0, 6))
+    hypothesis_add.add_argument("--evidence-score", type=int, choices=range(0, 6))
+    hypothesis_add.add_argument("--duplicate-risk", type=int, choices=range(0, 6))
+    hypothesis_add.add_argument("--test-cost", type=int, choices=range(0, 6))
+    hypothesis_add.add_argument("--operational-risk", type=int, choices=range(0, 6))
+    hypothesis_add.add_argument("--created-by", required=True)
+    hypothesis_add.set_defaults(func=command_hypothesis_add)
+
+    plan = subparsers.add_parser("plan", help="create or inspect an immutable test plan")
+    plan_subparsers = plan.add_subparsers(dest="plan_command", required=True)
+    plan_create = plan_subparsers.add_parser("create", help="create a draft test plan")
+    add_common_arguments(plan_create)
+    plan_create.add_argument("--hypothesis", required=True)
+    plan_create.add_argument("--action", choices=("scan", "exploit"), default="exploit")
+    plan_create.add_argument("--identity")
+    plan_create.add_argument("--control", required=True)
+    plan_create.add_argument("--single-change", required=True)
+    plan_create.add_argument("--expected-result", required=True)
+    plan_create.add_argument("--minimum-proof", required=True)
+    plan_create.add_argument("--stop-condition", required=True)
+    plan_create.add_argument("--cleanup", required=True)
+    plan_create.add_argument("--max-requests", type=int, default=2, choices=range(1, 21))
+    plan_create.add_argument("--created-by", required=True)
+    plan_create.set_defaults(func=command_plan_create)
+    plan_show = plan_subparsers.add_parser("show", help="show a test plan and its immutable hash")
+    add_common_arguments(plan_show)
+    plan_show.add_argument("plan_id", type=int)
+    plan_show.set_defaults(func=command_plan_show)
+
+    approve = subparsers.add_parser("approve", help="approve exactly one immutable test plan")
+    add_common_arguments(approve)
+    approve.add_argument("plan_id", type=int)
+    approve.add_argument("--approved-by", required=True)
+    approve.add_argument("--expires-hours", type=int, default=1, choices=range(1, 25))
+    approve.add_argument("--confirm", required=True, help="exact SHA-256 shown by plan show/create")
+    approve.set_defaults(func=command_approve)
+
+    begin = subparsers.add_parser("begin-test", help="record the start of one approved test")
+    add_common_arguments(begin)
+    begin.add_argument("plan_id", type=int)
+    begin.add_argument("--operator", required=True)
+    begin.set_defaults(func=command_begin_test)
+
+    record = subparsers.add_parser("record", help="record a completed approved test")
+    add_common_arguments(record)
+    record.add_argument("plan_id", type=int)
+    record.add_argument("--outcome", choices=("candidate", "rejected", "duplicate", "informative", "blocked"), required=True)
+    record.add_argument("--request-count", type=int, required=True, choices=range(0, 21))
+    record.add_argument("--evidence", required=True)
+    record.add_argument("--summary", required=True)
+    record.add_argument("--operator", required=True)
+    record.set_defaults(func=command_record)
+
+    confirm = subparsers.add_parser("confirm", help="turn an evidenced candidate into a confirmed finding")
+    add_common_arguments(confirm)
+    confirm.add_argument("--hypothesis", required=True)
+    confirm.add_argument("--title", required=True)
+    confirm.add_argument("--severity", required=True, choices=("critical", "high", "medium", "low", "info"))
+    confirm.add_argument("--impact", required=True)
+    confirm.add_argument("--reviewed-by", required=True)
+    confirm.set_defaults(func=command_confirm)
+
+    report = subparsers.add_parser("report", help="write a draft report; never submits it")
+    add_common_arguments(report)
+    report.add_argument("--hypothesis", required=True)
+    report.add_argument("--format", choices=("hackerone", "bugcrowd"), default="hackerone")
+    report.set_defaults(func=command_report)
+
+    status = subparsers.add_parser("status", help="show the next useful program state")
+    add_common_arguments(status)
+    status.set_defaults(func=command_status)
+
+    session = subparsers.add_parser("session", help="pause or close the active hunt session")
+    add_common_arguments(session)
+    session.add_argument("status", choices=("paused", "completed"))
+    session.add_argument("--notes", required=True)
+    session.set_defaults(func=command_session)
+
+    burp = subparsers.add_parser("burp", help="verify a standard streamable-HTTP Burp MCP endpoint")
+    burp_subparsers = burp.add_subparsers(dest="burp_command", required=True)
+    burp_probe = burp_subparsers.add_parser("probe", help="initialize MCP and list available tools")
+    burp_probe.add_argument("--url")
+    burp_probe.add_argument("--require-tool", action="append")
+    burp_probe.set_defaults(func=command_burp_probe)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    control.load_dotenv(ROOT / ".env")
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return args.func(args)
+    except BugBountyError as error:
+        print(f"Bug-bounty error: {error}", file=sys.stderr)
+        return 1
+    except sqlite3.Error as error:
+        print(f"Bug-bounty database error: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

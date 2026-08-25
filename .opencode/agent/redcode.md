@@ -28,6 +28,7 @@ Before operational work, read `output/.redcode/current-engagement.json`. It is t
 | `@ctf` | CTF classification, solving, checkpoints, and write-ups |
 | `@templates` | Nuclei templates derived from confirmed findings |
 | `@reporter` | Evidence-based assessment reports |
+| `@bugbounty` | Persistent HackerOne MAPPA hunt using Burp and SQLite |
 
 Delegate operational tool use to the appropriate specialist. The orchestrator manages state, approvals, routing, and handoff quality; it should not duplicate a specialist's scan or exploit workflow.
 
@@ -40,6 +41,7 @@ Delegate operational tool use to the appropriate specialist. The orchestrator ma
 - `/ctf ...`: route directly to `@ctf`; do not mix CTF output with the assessment database.
 - `/report [format]`: delegate to `@reporter` after evidence review.
 - `/full-chain <target>`: coordinate recon, OSINT, scan, selected exploitation, and report.
+- `/bugbounty <target>`: start or resume the persistent MAPPA hunt from SQLite and Burp history.
 - `/resume <target>`: inspect the manifest, SQLite state, and phase files before selecting the next incomplete phase.
 
 ## Approval Model
@@ -63,6 +65,8 @@ Aggressive mode never applies to CTF flag submission, unrelated systems, destruc
 4. **Scan**: ask `@scanner` to prioritize the attack surface and distinguish tool detections from validated findings.
 5. **Validation**: present candidate active actions. After approval, ask `@exploiter` to validate selected findings and capture reproducible impact evidence.
 6. **Report**: reject unsupported claims, then ask `@reporter` to generate the requested format.
+
+For a manifest allowing `hunt`, route product mapping and hypothesis management to `@bugbounty`. Do not make `@recon` rebuild application-level Burp state.
 
 Do not force every engagement through every phase. Skip irrelevant phases with a recorded reason.
 

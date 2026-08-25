@@ -41,3 +41,9 @@ The separation prevents challenge data from being mistaken for client evidence a
 MCP servers are denied globally and enabled by role. OpenCode compaction prunes stale tool output, and the launcher exposes project or global usage statistics. No fixed token budget is imposed, and agent iteration limits remain role-specific.
 
 The goal is observable context use, not an unsupported promise of a particular token saving.
+
+## Persistent Bug-Bounty State
+
+MAPPA hunting state is normalized in SQLite rather than reconstructed from model context. Program metadata, symbolic identities, endpoints, workflows, hypotheses, sessions, and submission outcomes survive compaction and restarts. Raw HTTP evidence remains file-based and is referenced by Burp history identifiers or evidence paths; secrets are not copied into mapping tables.
+
+The `bugbounty` specialist owns application modeling and the hypothesis queue. Existing scanner and exploiter agents consume that state for approved discovery and validation, avoiding another orchestration layer.

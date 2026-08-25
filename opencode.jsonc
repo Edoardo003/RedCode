@@ -50,7 +50,7 @@
     "burp": {
       "type": "remote",
       "url": "{env:BURP_MCP_URL}",
-      "enabled": false,
+      "enabled": true,
       "timeout": 120000,
     },
   },
@@ -108,6 +108,7 @@
         "playwright_*": "allow",
         "fetch_*": "allow",
         "sqlite_*": "allow",
+        "burp_*": "allow",
       },
     },
 
@@ -120,6 +121,20 @@
         "playwright_*": "allow",
         "fetch_*": "allow",
         "sqlite_*": "allow",
+        "burp_*": "allow",
+      },
+    },
+
+    "bugbounty": {
+      "model": "opencode-go/kimi-k2.7-code",
+      "steps": 80,
+      "permission": {
+        "filesystem_*": "allow",
+        "sqlite_*": "allow",
+        "hexstrike_*": "deny",
+        "playwright_*": "deny",
+        "fetch_*": "deny",
+        "burp_*": "deny",
       },
     },
 

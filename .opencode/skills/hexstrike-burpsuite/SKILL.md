@@ -39,7 +39,7 @@ burpsuite_scan(target="https://example.com", flags="--auth-token=BEARER_TOKEN")
 | Finding Type              | Why Burp Excels                            |
 | ------------------------- | ------------------------------------------ |
 | Complex injection chains  | Multi-step payload delivery                |
-| Business logic flaws      | Understanding application workflows        |
+| Workflow leads            | Crawler coverage for later manual analysis  |
 | Session management issues | Cookie analysis, token prediction          |
 | DOM-based XSS             | JavaScript execution and analysis          |
 | Insecure deserialization  | Deep payload fuzzing                       |
@@ -58,7 +58,7 @@ Burp Suite is itself a proxy tool. The HexStrike wrapper handles configuration. 
 
 ## Output Interpretation
 
-- **High-confidence findings** — Burp verifies findings with multiple checks. High-confidence = real vuln.
+- **High-confidence findings** — strong scanner leads that still require independent reproduction and demonstrated impact.
 - **Tentative/informational findings** — may need manual verification. Mark as `potential`.
 - **Severity mapping**: Burp uses its own severity scale. Map to standard: Critical/High/Medium/Low/Info.
 - **Issue type details** — Burp provides detailed remediation advice. Include in the report.

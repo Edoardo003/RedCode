@@ -71,6 +71,11 @@ class ManifestTests(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertIn("not allowed", reason)
 
+    def test_scope_allows_bug_bounty_hunt(self):
+        self.manifest["allowed_actions"].append("hunt")
+        allowed, _ = control.scope_decision(self.manifest, "example.test", "hunt")
+        self.assertTrue(allowed)
+
     def test_url_rule_matches_origin_and_path(self):
         manifest = dict(self.manifest)
         manifest["in_scope"] = ["http://127.0.0.1:3000/api"]
@@ -85,19 +90,33 @@ class ManifestTests(unittest.TestCase):
 
 
 class DatabaseTests(unittest.TestCase):
-    def test_fresh_database_uses_schema_v2(self):
+    def test_fresh_database_uses_schema_v6(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db = Path(temp_dir) / "fresh.db"
             version, backup = control.migrate_database(db)
-            self.assertEqual(version, 2)
+            self.assertEqual(version, 6)
             self.assertIsNone(backup)
             connection = sqlite3.connect(db)
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 6)
             self.assertIn("engagements", control.table_names(connection))
             self.assertIn("phase", control.table_columns(connection, "scans"))
+            for table in (
+                "bug_bounty_programs", "identities", "endpoints",
+                "application_workflows", "hypotheses", "hunt_sessions",
+                "bug_bounty_submissions", "policy_snapshots",
+                "program_scope_rules", "program_restrictions", "burp_import_runs",
+                "burp_message_refs", "test_plans", "approval_executions",
+                "hypothesis_events",
+            ):
+                self.assertIn(table, control.table_names(connection))
+            self.assertIn("policy_snapshot_id", control.table_columns(connection, "test_plans"))
+            self.assertTrue(
+                {"source_message_ref", "request_fingerprint"}
+                <= control.table_columns(connection, "burp_message_refs")
+            )
             connection.close()
             repeated_version, repeated_backup = control.migrate_database(db)
-            self.assertEqual(repeated_version, 2)
+            self.assertEqual(repeated_version, 6)
             self.assertIsNone(repeated_backup)
 
     def test_v1_database_is_backed_up_and_migrated(self):
@@ -137,18 +156,91 @@ class DatabaseTests(unittest.TestCase):
             connection.close()
 
             version, backup = control.migrate_database(db)
-            self.assertEqual(version, 2)
+            self.assertEqual(version, 6)
             self.assertIsNotNone(backup)
             self.assertTrue(backup.exists())
 
             connection = sqlite3.connect(db)
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 6)
             self.assertEqual(
                 connection.execute("SELECT domain FROM targets").fetchone()[0],
                 "legacy.example.test",
             )
             scan_columns = control.table_columns(connection, "scans")
             self.assertTrue({"phase", "subdomain", "exit_code"} <= scan_columns)
+            connection.close()
+
+    def test_v2_database_is_backed_up_and_migrated(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db = Path(temp_dir) / "v2.db"
+            connection = sqlite3.connect(db)
+            connection.executescript(
+                """
+                CREATE TABLE targets (id INTEGER PRIMARY KEY, domain TEXT UNIQUE);
+                CREATE TABLE findings (id INTEGER PRIMARY KEY, finding_id TEXT UNIQUE);
+                CREATE TABLE scans (
+                  id INTEGER PRIMARY KEY, target_id INTEGER, tool TEXT
+                );
+                CREATE TABLE credentials (id INTEGER PRIMARY KEY);
+                CREATE TABLE schema_migrations (
+                  version INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                  applied_at TEXT DEFAULT (datetime('now'))
+                );
+                INSERT INTO schema_migrations(version, name) VALUES (2, 'control_plane');
+                """
+            )
+            connection.executescript(
+                (Path(__file__).resolve().parents[1] / "migrations" / "002_control_plane.sql").read_text(encoding="utf-8")
+            )
+            connection.execute("PRAGMA user_version = 2")
+            connection.commit()
+            connection.close()
+
+            version, backup = control.migrate_database(db)
+            self.assertEqual(version, 6)
+            self.assertIsNotNone(backup)
+            connection = sqlite3.connect(db)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 6)
+            self.assertIn("hypotheses", control.table_names(connection))
+            self.assertIn("endpoints", control.table_names(connection))
+            connection.close()
+
+    def test_v3_database_is_backed_up_and_migrated_to_assistant_schema(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db = Path(temp_dir) / "v3.db"
+            connection = sqlite3.connect(db)
+            connection.executescript(
+                (Path(__file__).resolve().parents[1] / "schema.sql")
+                .read_text(encoding="utf-8")
+                .replace("PRAGMA user_version = 6;", "PRAGMA user_version = 3;")
+            )
+            for table in (
+                "policy_snapshots", "program_scope_rules", "program_restrictions",
+                "burp_import_runs", "burp_message_refs", "test_plans",
+                "approval_executions", "hypothesis_events",
+            ):
+                connection.execute(f"DROP TABLE {table}")
+            connection.execute("DELETE FROM schema_migrations WHERE version IN (4, 5, 6)")
+            connection.commit()
+            connection.close()
+
+            version, backup = control.migrate_database(db)
+            self.assertEqual(version, 6)
+            self.assertIsNotNone(backup)
+            self.assertTrue(backup.exists())
+            connection = sqlite3.connect(db)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 6)
+            self.assertIn("test_plans", control.table_names(connection))
+            self.assertIn("hypothesis_events", control.table_names(connection))
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM schema_migrations WHERE version = 6").fetchone()[0],
+                1,
+            )
+            self.assertIn("policy_snapshot_id", control.table_columns(connection, "test_plans"))
+            self.assertTrue(
+                {"source_message_ref", "request_fingerprint"}
+                <= control.table_columns(connection, "burp_message_refs")
+            )
             connection.close()
 
 
