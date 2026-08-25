@@ -9,17 +9,38 @@ import fnmatch
 import ipaddress
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import socket
 import sqlite3
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import urlopen
+
+try:
+    from arsenal_client import (
+        ArsenalClient,
+        ArsenalClientError,
+        client_from_session,
+        create_session,
+    )
+    from arsenal_client import (
+        session_path as resolve_arsenal_session_path,
+    )
+except ModuleNotFoundError:
+    from scripts.arsenal_client import (
+        ArsenalClient,
+        ArsenalClientError,
+        client_from_session,
+        create_session,
+    )
+    from scripts.arsenal_client import (
+        session_path as resolve_arsenal_session_path,
+    )
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,6 +75,25 @@ CAPABILITY_PROFILES = {
     "ctf-rev": ["file", "strings", "radare2", "ghidra", "angr"],
     "ctf-forensics": ["file", "binwalk", "exiftool", "foremost", "volatility3"],
 }
+OPENCODE_AGENTS = {
+    "bugbounty",
+    "redcode",
+    "recon",
+    "scanner",
+    "exploiter",
+    "osint",
+    "socialeng",
+    "ctf",
+    "reporter",
+    "templates",
+}
+ARSENAL_DISABLED_MCP = {"hexstrike", "fetch", "playwright", "burp"}
+ARSENAL_DENIED_TOOLS = {
+    "bash",
+    "webfetch",
+    "websearch",
+    *(f"{name}_*" for name in ARSENAL_DISABLED_MCP),
+}
 
 
 def load_dotenv(path: Path) -> None:
@@ -80,6 +120,73 @@ def manifest_path(explicit: str | None = None) -> Path:
     return project_path(
         explicit or os.environ.get("REDCODE_ENGAGEMENT"), "engagement.json"
     )
+
+
+def arsenal_session_path(explicit: str | None = None) -> Path:
+    return resolve_arsenal_session_path(explicit, ROOT)
+
+
+def activate_runtime_mode(mode: str, quiet: bool = False) -> Path:
+    path = ROOT / "output" / ".redcode" / "current-runtime.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": 1,
+        "mode": mode,
+        "activated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    if os.name != "nt":
+        path.chmod(0o600)
+    if not quiet:
+        print(f"RedCode runtime profile activated: {mode}")
+    return path
+
+
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def arsenal_opencode_override(existing: str | None = None) -> dict[str, Any]:
+    if existing:
+        try:
+            base = json.loads(existing)
+        except json.JSONDecodeError as exc:
+            raise ValueError("OPENCODE_CONFIG_CONTENT contains invalid JSON") from exc
+        if not isinstance(base, dict):
+            raise ValueError("OPENCODE_CONFIG_CONTENT must contain a JSON object")
+    else:
+        base = {}
+
+    permissions = {name: "deny" for name in sorted(ARSENAL_DENIED_TOOLS)}
+    permissions["arsenal_*"] = "allow"
+    instructions = base.get("instructions", [])
+    if not isinstance(instructions, list):
+        instructions = []
+    arsenal_instruction = ".opencode/instructions/arsenal-mode.md"
+    instructions = [*instructions, arsenal_instruction]
+    instructions = list(dict.fromkeys(instructions))
+    override = {
+        "mcp": {
+            "arsenal": {"enabled": True},
+            **{
+                name: {"enabled": False}
+                for name in sorted(ARSENAL_DISABLED_MCP)
+            },
+        },
+        "permission": permissions,
+        "instructions": instructions,
+        "agent": {
+            agent: {"permission": permissions}
+            for agent in sorted(OPENCODE_AGENTS)
+        },
+    }
+    return deep_merge(base, override)
 
 
 def validate_manifest(data: Any) -> list[str]:
@@ -213,7 +320,7 @@ def apply_schema(connection: sqlite3.Connection) -> None:
 
 
 def backup_database(connection: sqlite3.Connection, path: Path, version: int) -> Path:
-    stamp = dt.datetime.now().strftime("%Y%m%d%H%M%S")
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S")
     backup_path = path.with_name(f"{path.name}.v{version}-backup-{stamp}")
     backup_connection = sqlite3.connect(backup_path)
     try:
@@ -367,7 +474,7 @@ class Doctor:
             else:
                 self.fail("Node.js 22 or newer is required")
 
-        if sys.version_info >= (3, 10):
+        if sys.version_info >= (3, 10):  # noqa: UP036 - doctor validates direct invocation
             self.ok(f"Python version: {sys.version.split()[0]}")
         else:
             self.fail("Python 3.10 or newer is required")
@@ -494,6 +601,31 @@ class Doctor:
                 else:
                     self.ok(f"capability {profile}: {len(present)}/{len(tools)}")
 
+    def check_arsenal(self, path: Path) -> None:
+        try:
+            client, workspace_id = client_from_session(path)
+            manifest = client.manifest()
+            actions_manifest = client.actions_manifest()
+            context = client.workspace_context(
+                workspace_id,
+                job_limit=1,
+                finding_limit=0,
+                resource_limit=1,
+                block_limit=1,
+            )
+        except ArsenalClientError as exc:
+            self.fail(f"Arsenal session check failed: {exc}")
+            return
+        workspace = context["workspace"]
+        self.ok(
+            f"Arsenal {manifest.get('arsenal_version', 'unknown')} protocol "
+            f"{manifest['protocol_version']} read-only + "
+            f"{actions_manifest['protocol_version']} proposal-only"
+        )
+        self.ok(f"Arsenal workspace: {workspace['name']} ({workspace['id']})")
+        if os.name != "nt" and path.stat().st_mode & 0o077:
+            self.warn(f"Arsenal session is readable by other users: {path}")
+
     def check_mcp(self) -> None:
         opencode = shutil.which("opencode")
         if not opencode:
@@ -555,10 +687,16 @@ def command_doctor(args: argparse.Namespace) -> int:
     print()
     doctor.check_commands()
     doctor.check_paths()
-    doctor.check_manifest(manifest_path(args.manifest))
-    doctor.check_database(database_path(args.db))
-    doctor.check_hexstrike(os.environ.get("HEXSTRIKE_URL", "http://127.0.0.1:8888"))
-    doctor.check_burp(os.environ.get("BURP_MCP_URL"))
+    mode = args.mode or os.environ.get("REDCODE_MODE", "standalone")
+    if mode == "arsenal":
+        doctor.check_arsenal(arsenal_session_path(args.arsenal_session))
+    else:
+        doctor.check_manifest(manifest_path(args.manifest))
+        doctor.check_database(database_path(args.db))
+        doctor.check_hexstrike(
+            os.environ.get("HEXSTRIKE_URL", "http://127.0.0.1:8888")
+        )
+        doctor.check_burp(os.environ.get("BURP_MCP_URL"))
     if not args.skip_mcp:
         doctor.check_mcp()
     return doctor.summary()
@@ -678,6 +816,108 @@ def command_scope_check(args: argparse.Namespace) -> int:
     return 0 if allowed else 1
 
 
+def select_arsenal_workspace(
+    client: ArsenalClient, requested_id: str | None
+) -> str:
+    if requested_id:
+        return requested_id
+    response = client.list_workspaces()
+    items = response.get("items")
+    if not isinstance(items, list) or not items:
+        raise ArsenalClientError("Arsenal has no available workspaces")
+    valid_items = [
+        item
+        for item in items
+        if isinstance(item, dict)
+        and isinstance(item.get("id"), str)
+        and isinstance(item.get("name"), str)
+    ]
+    if not valid_items:
+        raise ArsenalClientError("Arsenal returned no valid workspace entries")
+    if len(valid_items) == 1:
+        return valid_items[0]["id"]
+    if not sys.stdin.isatty():
+        choices = ", ".join(
+            f"{item['name']} ({item['id']})" for item in valid_items
+        )
+        raise ArsenalClientError(
+            f"multiple Arsenal workspaces are available; use --workspace: {choices}"
+        )
+    print("Available Arsenal workspaces:")
+    for index, item in enumerate(valid_items, start=1):
+        print(f"  {index}. {item['name']} ({item['id']})")
+    raw_choice = input("Select workspace: ").strip()
+    try:
+        choice = int(raw_choice)
+    except ValueError as exc:
+        raise ArsenalClientError("workspace selection must be a number") from exc
+    if choice < 1 or choice > len(valid_items):
+        raise ArsenalClientError("workspace selection is out of range")
+    return valid_items[choice - 1]["id"]
+
+
+def command_arsenal_connect(args: argparse.Namespace) -> int:
+    try:
+        client = ArsenalClient(args.url, token_file=args.token_file)
+        client.manifest()
+        workspace_id = select_arsenal_workspace(client, args.workspace)
+        session = create_session(
+            client, workspace_id, arsenal_session_path(args.session)
+        )
+        activate_runtime_mode("arsenal", quiet=True)
+    except ArsenalClientError as exc:
+        print(f"Arsenal connection failed: {exc}", file=sys.stderr)
+        return 1
+    if not args.quiet:
+        workspace = session["workspace"]
+        print(
+            f"Arsenal session ready: {workspace['name']} ({workspace['id']}) "
+            f"using protocol {session['protocol_version']}"
+        )
+    return 0
+
+
+def command_arsenal_status(args: argparse.Namespace) -> int:
+    path = arsenal_session_path(args.session)
+    try:
+        client, workspace_id = client_from_session(path)
+        manifest = client.manifest()
+        actions_manifest = client.actions_manifest()
+        context = client.workspace_context(
+            workspace_id,
+            job_limit=1,
+            finding_limit=0,
+            resource_limit=1,
+            block_limit=1,
+        )
+    except ArsenalClientError as exc:
+        print(f"Arsenal session unavailable: {exc}", file=sys.stderr)
+        return 1
+    workspace = context["workspace"]
+    print(
+        f"Arsenal {manifest.get('arsenal_version', 'unknown')} reachable; "
+        f"workspace {workspace['name']} ({workspace['id']}); "
+        f"protocol {manifest['protocol_version']} read-only + "
+        f"{actions_manifest['protocol_version']} proposal-only"
+    )
+    return 0
+
+
+def command_arsenal_opencode_config(_args: argparse.Namespace) -> int:
+    try:
+        config = arsenal_opencode_override(os.environ.get("OPENCODE_CONFIG_CONTENT"))
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(json.dumps(config, separators=(",", ":")))
+    return 0
+
+
+def command_runtime_activate(args: argparse.Namespace) -> int:
+    activate_runtime_mode(args.mode, quiet=args.quiet)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="redcode", description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -686,6 +926,8 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--db")
     doctor.add_argument("--manifest")
     doctor.add_argument("--skip-mcp", action="store_true")
+    doctor.add_argument("--mode", choices=("standalone", "arsenal"))
+    doctor.add_argument("--arsenal-session")
     doctor.set_defaults(func=command_doctor)
 
     db = subparsers.add_parser("db", help="manage the RedCode database")
@@ -733,6 +975,50 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("action", choices=sorted(ACTIONS))
     check.add_argument("--file")
     check.set_defaults(func=command_scope_check)
+
+    arsenal = subparsers.add_parser(
+        "arsenal", help="manage a mediated Arsenal workspace session"
+    )
+    arsenal_subparsers = arsenal.add_subparsers(
+        dest="arsenal_command", required=True
+    )
+    connect = arsenal_subparsers.add_parser(
+        "connect", help="negotiate protocol 1.0 and bind a workspace"
+    )
+    connect.add_argument(
+        "--url", default=os.environ.get("ARSENAL_URL", "http://127.0.0.1:8000")
+    )
+    connect.add_argument("--workspace")
+    connect.add_argument("--session")
+    connect.add_argument(
+        "--token-file",
+        default=os.environ.get("ARSENAL_AGENT_TOKEN_FILE"),
+        help="path to Arsenal's local agent token (auto-discovered by default)",
+    )
+    connect.add_argument("--quiet", action="store_true")
+    connect.set_defaults(func=command_arsenal_connect)
+
+    status = arsenal_subparsers.add_parser(
+        "status", help="verify the bound workspace and protocol"
+    )
+    status.add_argument("--session")
+    status.set_defaults(func=command_arsenal_status)
+
+    runtime_config = arsenal_subparsers.add_parser(
+        "opencode-config", help=argparse.SUPPRESS
+    )
+    runtime_config.set_defaults(func=command_arsenal_opencode_config)
+
+    runtime = subparsers.add_parser("runtime", help=argparse.SUPPRESS)
+    runtime_subparsers = runtime.add_subparsers(
+        dest="runtime_command", required=True
+    )
+    runtime_activate = runtime_subparsers.add_parser(
+        "activate", help=argparse.SUPPRESS
+    )
+    runtime_activate.add_argument("--mode", choices=("standalone", "arsenal"), required=True)
+    runtime_activate.add_argument("--quiet", action="store_true")
+    runtime_activate.set_defaults(func=command_runtime_activate)
     return parser
 
 

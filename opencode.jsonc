@@ -15,6 +15,18 @@
       "timeout": 86400000,
     },
 
+    // Read-only Arsenal bridge. The launcher enables it only after a successful
+    // protocol handshake and binds it to the selected workspace session.
+    "arsenal": {
+      "type": "local",
+      "command": ["python3", "scripts/arsenal_mcp.py"],
+      "enabled": false,
+      "environment": {
+        "ARSENAL_SESSION": "{env:ARSENAL_SESSION}",
+      },
+      "timeout": 30000,
+    },
+
     // Filesystem access is limited to generated output, templates, and wordlists.
     "filesystem": {
       "type": "local",
@@ -72,6 +84,7 @@
   // in each model context and prevents accidental cross-role tool use.
   "permission": {
     "hexstrike_*": "deny",
+    "arsenal_*": "deny",
     "filesystem_*": "deny",
     "playwright_*": "deny",
     "fetch_*": "deny",

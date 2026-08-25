@@ -221,7 +221,7 @@ if [ "$HEXSTRIKE_MODE" = "local" ]; then
 fi
 
 info "Installing local Python MCP servers..."
-"$VENV_PYTHON" -m pip install mcp-server-fetch mcp-server-sqlite
+"$VENV_PYTHON" -m pip install "mcp>=1.6,<3" mcp-server-fetch mcp-server-sqlite
 ok "Python MCP servers installed"
 
 info "Preparing local Node MCP servers..."

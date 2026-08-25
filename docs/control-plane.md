@@ -19,6 +19,18 @@ The doctor checks:
 - HexStrike health, backend version, host-tool availability, and capability profiles;
 - OpenCode MCP startup status.
 
+Use `--mode arsenal` after connecting a workspace to validate Arsenal instead of
+HexStrike:
+
+```bash
+./redcode arsenal connect --url http://127.0.0.1:8000 --workspace <workspace-id>
+./redcode doctor --mode arsenal
+```
+
+The connect command auto-discovers Arsenal's private `agent-token`. With a custom
+Arsenal data directory, set `ARSENAL_AGENT_TOKEN_FILE` or add
+`--token-file /absolute/path/to/agent-token`.
+
 Use `--skip-mcp` when only local files, the database, and HexStrike should be checked:
 
 ```bash
@@ -143,3 +155,18 @@ The command returns `ALLOW` with exit code 0 or `DENY` with exit code 1. Matchin
 The manifest, launcher activation, orchestrator instructions, and scope command provide a concrete preflight and a shared scope source. They do not intercept every HexStrike API call. Complete technical enforcement would require a policy gateway that validates every target-bearing MCP request before forwarding it to HexStrike.
 
 Do not describe the current control plane as a sandbox or absolute network boundary. The analyst must still review tool targets and generated commands.
+
+## Runtime Profiles
+
+The launcher writes `output/.redcode/current-runtime.json` on every start so an old
+session file cannot silently select a profile.
+
+- `standalone` activates the local engagement manifest and uses the normal MCP set;
+- `arsenal` performs a live protocol handshake, binds one workspace, and applies a
+  high-precedence OpenCode runtime override.
+
+The Arsenal override enables only the mediated Arsenal bridge for bounded context,
+inert proposals, and run requests. It disables HexStrike, Fetch, Playwright, Burp, Bash,
+and built-in web access for every configured agent. The tracked Arsenal MCP entry
+remains disabled when OpenCode is started outside the launcher or when the Standalone
+profile is selected.

@@ -5,10 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
-
 
 SECRET_KEYS = {
     "apikey",

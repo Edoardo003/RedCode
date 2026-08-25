@@ -18,6 +18,20 @@ The repository does not vendor HexStrike. Setup clones it as a local dependency,
 
 This arrangement keeps heavy security tooling away from the OpenCode process, but introduces version and availability risk. `./redcode doctor` reports the observed backend version and available capabilities; it does not guarantee compatibility with every HexStrike release.
 
+## Standalone and Arsenal Runtime Profiles
+
+RedCode keeps one codebase and selects its operational provider at launch. Standalone
+mode exposes the existing direct HexStrike workflow. Arsenal mode first negotiates the
+versioned Agent API, fixes the session to one workspace, then injects a higher-precedence
+OpenCode configuration that disables direct network tooling and enables a small
+workspace-bound MCP bridge.
+
+The bridge deliberately wraps Arsenal instead of teaching every agent its REST details.
+It reduces the visible tool surface, prevents arbitrary workspace IDs on job reads, and
+keeps Arsenal as the source of truth. Read context, inert block proposals, and run
+requests use separate protocols; draft acceptance and execution confirmation remain
+Arsenal-only actions.
+
 ## Scope Preflight Instead of a False Sandbox
 
 An engagement manifest records target rules and permitted actions. The launcher validates it, agents read the activated copy, and `./redcode scope check` provides a deterministic preflight decision.

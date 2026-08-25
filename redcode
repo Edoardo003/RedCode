@@ -13,8 +13,13 @@ fi
 : "${REDCODE_DB:=$DIR/redcode.db}"
 : "${REDCODE_ENGAGEMENT:=$DIR/engagement.json}"
 : "${REDCODE_COMMAND_PREFIX:=proxychains4 -q}"
+: "${ARSENAL_URL:=http://127.0.0.1:8000}"
+: "${ARSENAL_SESSION:=$DIR/output/.redcode/current-arsenal-session.json}"
+: "${ARSENAL_WORKSPACE:=}"
+: "${REDCODE_MODE:=}"
 : "${PROXY_URL:=}"
-export HEXSTRIKE_URL REDCODE_DB REDCODE_ENGAGEMENT REDCODE_COMMAND_PREFIX PROXY_URL
+export HEXSTRIKE_URL REDCODE_DB REDCODE_ENGAGEMENT REDCODE_COMMAND_PREFIX
+export ARSENAL_URL ARSENAL_SESSION ARSENAL_WORKSPACE REDCODE_MODE PROXY_URL
 
 # All processes launched through this entry point receive the configured prefix.
 # Use a simple space-separated executable and arguments (the default is
@@ -57,7 +62,11 @@ if [ -n "$PROXY_URL" ]; then
 fi
 
 case "${1:-}" in
-  doctor|db|engagement|scope)
+  gateway)
+    shift
+    exec_with_prefix python3 "$DIR/scripts/redcode_gateway.py" "$@"
+    ;;
+  doctor|db|engagement|scope|arsenal|runtime)
     exec_with_prefix python3 "$DIR/scripts/redcode_control.py" "$@"
     ;;
   bugbounty)
@@ -73,9 +82,99 @@ case "${1:-}" in
     ;;
 esac
 
-if [ -f "$REDCODE_ENGAGEMENT" ]; then
+MODE="$REDCODE_MODE"
+WORKSPACE="$ARSENAL_WORKSPACE"
+OPENCODE_ARGS=()
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --mode)
+      if [ "$#" -lt 2 ]; then
+        echo "redcode: --mode requires standalone or arsenal" >&2
+        exit 2
+      fi
+      MODE="$2"
+      shift 2
+      ;;
+    --arsenal-url)
+      if [ "$#" -lt 2 ]; then
+        echo "redcode: --arsenal-url requires an origin" >&2
+        exit 2
+      fi
+      ARSENAL_URL="$2"
+      shift 2
+      ;;
+    --workspace)
+      if [ "$#" -lt 2 ]; then
+        echo "redcode: --workspace requires an Arsenal workspace id" >&2
+        exit 2
+      fi
+      WORKSPACE="$2"
+      shift 2
+      ;;
+    --)
+      shift
+      OPENCODE_ARGS+=("$@")
+      break
+      ;;
+    *)
+      OPENCODE_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [ -z "$MODE" ]; then
+  if [ -t 0 ]; then
+    echo "How do you want to start RedCode?"
+    echo
+    echo "  1. Standalone (direct HexStrike tools)"
+    echo "  2. Arsenal (mediated workspace session)"
+    echo
+    read -r -p "Selection [1]: " selection
+    case "${selection:-1}" in
+      1) MODE="standalone" ;;
+      2) MODE="arsenal" ;;
+      *) echo "redcode: invalid mode selection" >&2; exit 2 ;;
+    esac
+  else
+    MODE="standalone"
+  fi
+fi
+
+case "$MODE" in
+  standalone)
+    export REDCODE_MODE="standalone"
+    run_with_prefix python3 "$DIR/scripts/redcode_control.py" runtime activate \
+      --mode standalone --quiet
+    ;;
+  arsenal)
+    connect_args=(
+      arsenal connect
+      --url "$ARSENAL_URL"
+      --session "$ARSENAL_SESSION"
+      --quiet
+    )
+    if [ -n "$WORKSPACE" ]; then
+      connect_args+=(--workspace "$WORKSPACE")
+    fi
+    run_with_prefix python3 "$DIR/scripts/redcode_control.py" "${connect_args[@]}"
+    export REDCODE_MODE="arsenal" ARSENAL_URL ARSENAL_SESSION
+    export ARSENAL_WORKSPACE="$WORKSPACE"
+    OPENCODE_CONFIG_CONTENT="$(
+      run_with_prefix python3 "$DIR/scripts/redcode_control.py" arsenal opencode-config
+    )"
+    export OPENCODE_CONFIG_CONTENT
+    ;;
+  *)
+    echo "redcode: unsupported mode '$MODE' (expected standalone or arsenal)" >&2
+    exit 2
+    ;;
+esac
+
+if [ "$MODE" = "standalone" ] && [ -f "$REDCODE_ENGAGEMENT" ]; then
   run_with_prefix python3 "$DIR/scripts/redcode_control.py" engagement activate \
     --file "$REDCODE_ENGAGEMENT" --quiet
 fi
 
-exec_with_prefix opencode "$@"
+exec_with_prefix opencode "${OPENCODE_ARGS[@]}"
