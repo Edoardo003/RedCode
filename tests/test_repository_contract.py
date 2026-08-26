@@ -176,6 +176,17 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertIn(".venv/", gitignore.splitlines())
         self.assertIn('pip install "mcp>=1.6,<3" ', setup)
 
+    def test_setup_configures_narrow_proxychains_bypasses(self):
+        setup = (ROOT / "setup.sh").read_text(encoding="utf-8")
+        env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+        self.assertIn("localnet 127.0.0.0/255.0.0.0", setup)
+        self.assertIn("localnet ::1/128", setup)
+        self.assertIn("255.255.255.255", setup)
+        self.assertIn(".redcode-backup", setup)
+        self.assertIn("--max-time 3", setup)
+        self.assertIn("BURP_MCP_URL=http://10.10.10.10:9876", env_example)
+        self.assertNotIn("BURP_MCP_URL=http://10.10.10.10:9876/mcp", env_example)
+
     def test_arsenal_bridge_is_disabled_until_launcher_handshake(self):
         arsenal = self.config["mcp"]["arsenal"]
         self.assertFalse(arsenal["enabled"])

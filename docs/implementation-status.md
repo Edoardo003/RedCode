@@ -67,6 +67,10 @@ validazione dell'impatto e invio della submission.
   ricevono il prefisso configurabile `proxychains4 -q`.
 - Il launcher esporta anche le variabili proxy HTTP standard quando `PROXY_URL`
   è configurato.
+- Il setup conserva la lista proxy esistente e aggiunge esclusioni `localnet`
+  ristrette a loopback e all'host/porta numerici di Burp MCP, creando prima un
+  backup della configurazione. Il controllo di raggiungibilità Burp ha un
+  limite temporale anche quando il server mantiene aperto uno stream SSE.
 
 ## Verifiche già eseguite
 

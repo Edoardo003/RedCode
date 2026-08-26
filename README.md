@@ -108,6 +108,14 @@ its system configuration before starting RedCode. The launcher fails closed if
 the prefix executable is unavailable. The prefix is configurable through
 `REDCODE_COMMAND_PREFIX` in `.env`.
 
+`setup.sh` adds direct `localnet` exclusions for IPv4/IPv6 loopback and for the
+exact numeric host and port in `BURP_MCP_URL`. This keeps local HexStrike and
+the trusted Burp MCP hop reachable without bypassing Proxychains for unrelated
+targets. It creates a one-time `.redcode-backup` beside the system Proxychains
+configuration before changing it; without write access, setup prints the exact
+rules for the operator to review and add manually. Existing proxy-list entries
+and credentials are left unchanged.
+
 After changing this value, restart the local service with
 `sudo systemctl restart redcode-hexstrike`.
 

@@ -30,6 +30,42 @@ set_env() {
   fi
 }
 
+proxychains_config_path() {
+  local candidate
+  for candidate in /etc/proxychains4.conf /etc/proxychains.conf; do
+    if [ -f "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+add_proxychains_localnet() {
+  local config_path="$1"
+  local rule="$2"
+  local temp_path
+
+  if grep -Fqx "$rule" "$config_path"; then
+    return 0
+  fi
+  if [ ! -w "$config_path" ]; then
+    warn "Cannot update $config_path without write access; add this line before [ProxyList]: $rule"
+    return 1
+  fi
+  if [ ! -f "${config_path}.redcode-backup" ]; then
+    cp -p "$config_path" "${config_path}.redcode-backup"
+  fi
+  temp_path="$(mktemp "${config_path}.redcode.XXXXXX")"
+  awk -v rule="$rule" '
+    /^\[ProxyList\][[:space:]]*$/ && !inserted { print rule; inserted=1 }
+    { print }
+    END { if (!inserted) print rule }
+  ' "$config_path" > "$temp_path"
+  cp "$temp_path" "$config_path"
+  rm -f "$temp_path"
+}
+
 require_command() {
   local command_name="$1"
   local install_hint="$2"
@@ -137,7 +173,7 @@ ok "HexStrike backend configured at $HEXSTRIKE_URL"
 
 echo ""
 echo -e "${CYAN}Burp MCP backend${NC}"
-burp_default="${BURP_MCP_URL:-http://10.10.10.10:9876/mcp}"
+burp_default="${BURP_MCP_URL:-http://10.10.10.10:9876}"
 echo -e "Burp MCP URL on the trusted LAN/VLAN [${YELLOW}${burp_default}${NC}]:"
 read -r burp_input
 BURP_MCP_URL="${burp_input:-$burp_default}"
@@ -148,6 +184,39 @@ fi
 set_env BURP_MCP_URL "$BURP_MCP_URL"
 export BURP_MCP_URL
 ok "Burp MCP configured at $BURP_MCP_URL"
+
+if command -v proxychains4 &>/dev/null; then
+  if proxychains_config="$(proxychains_config_path)"; then
+    info "Configuring direct Proxychains routes for local services..."
+    add_proxychains_localnet "$proxychains_config" "localnet 127.0.0.0/255.0.0.0" || true
+    add_proxychains_localnet "$proxychains_config" "localnet ::1/128" || true
+    burp_localnet="$($VENV_PYTHON - "$BURP_MCP_URL" <<'PY'
+import ipaddress
+import sys
+from urllib.parse import urlparse
+
+parsed = urlparse(sys.argv[1])
+try:
+    address = ipaddress.ip_address(parsed.hostname or "")
+except ValueError:
+    raise SystemExit(0)
+port = parsed.port or (443 if parsed.scheme == "https" else 80)
+if address.version == 4:
+    print(f"localnet {address}:{port}/255.255.255.255")
+else:
+    print(f"localnet [{address}]:{port}/128")
+PY
+)"
+    if [ -n "$burp_localnet" ]; then
+      add_proxychains_localnet "$proxychains_config" "$burp_localnet" || true
+      ok "Proxychains direct routes configured in $proxychains_config"
+    else
+      warn "BURP_MCP_URL uses a hostname; add its resolved trusted address as a localnet rule in $proxychains_config."
+    fi
+  else
+    warn "Proxychains configuration was not found; configure loopback and Burp localnet exclusions before starting RedCode."
+  fi
+fi
 
 info "Creating project directories..."
 mkdir -p output wordlists templates/nuclei/custom
@@ -243,7 +312,8 @@ else
 fi
 
 info "Checking Burp MCP connectivity..."
-if curl -sS --connect-timeout 5 -o /dev/null "$BURP_MCP_URL"; then
+burp_status="$(curl -sS --connect-timeout 5 --max-time 3 -o /dev/null -w '%{http_code}' "$BURP_MCP_URL" || true)"
+if [[ "$burp_status" =~ ^[234][0-9][0-9]$ ]]; then
   ok "Burp MCP endpoint is reachable at $BURP_MCP_URL"
 else
   warn "Burp MCP did not answer at $BURP_MCP_URL."
