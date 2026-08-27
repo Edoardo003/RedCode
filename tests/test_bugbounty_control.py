@@ -578,6 +578,131 @@ class BugBountyControlTests(unittest.TestCase):
         self.assertEqual(hypothesis["impact_score"], 5)
         self.assertGreater(hypothesis["priority"], 0)
 
+    def test_semantic_workflow_generation_is_explainable_and_deduplicated(self):
+        self.assertEqual(
+            self.run_command(
+                "onboard", "--program-name", "Example", "--policy-file", str(self.policy),
+                "--scope", "*.example.test", "--reviewed-by", "analyst",
+            )[0],
+            0,
+        )
+        for label, role in (
+            ("member-a", "member"), ("admin-a", "admin"), ("owner-a", "owner"),
+        ):
+            self.assertEqual(
+                self.run_command("identity", "add", "--label", label, "--tenant", "tenant-a", "--role", role)[0],
+                0,
+            )
+        export = self.root / "workflow.json"
+        export.write_text(
+            json.dumps([
+                {"id": "accept", "url": "https://api.example.test/api/invites/1/accept", "method": "POST"},
+                {"id": "project-read", "url": "https://api.example.test/api/projects/1", "method": "GET"},
+                {"id": "project-update", "url": "https://api.example.test/api/projects/1", "method": "PATCH"},
+            ]),
+            encoding="utf-8",
+        )
+        self.assertEqual(self.run_command("ingest", "--file", str(export), "--identity", "member-a")[0], 0)
+        self.assertEqual(self.run_command("map")[0], 0)
+        endpoints = {
+            row["method"]: row["id"]
+            for row in self.fetchall("SELECT id, method FROM endpoints ORDER BY id")
+        }
+        self.assertEqual(
+            self.run_command(
+                "workflow", "annotate", "--host", "api.example.test", "--name", "api",
+                "--actor", "member-a", "--object", "invite", "--object", "project",
+                "--state", "pending", "--state", "accepted", "--sensitivity", "4",
+            )[0],
+            0,
+        )
+        self.assertEqual(
+            self.run_command(
+                "workflow", "state", "set", "--host", "api.example.test", "--name", "api",
+                "--state", "accepted", "--terminal",
+            )[0],
+            0,
+        )
+        self.assertEqual(
+            self.run_command(
+                "workflow", "transition", "add", "--host", "api.example.test", "--name", "api",
+                "--from-state", "pending", "--to-state", "accepted", "--endpoint-id", str(endpoints["POST"]),
+                "--actor", "member-a", "--confidence", "4",
+            )[0],
+            0,
+        )
+        self.assertEqual(
+            self.run_command(
+                "workflow", "transition", "add", "--host", "api.example.test", "--name", "api",
+                "--from-state", "active", "--to-state", "removed", "--endpoint-id", str(endpoints["GET"]),
+                "--actor", "member-a", "--authorization-effect", "revoke", "--capability", "project-read",
+                "--trust-boundary", "membership", "--sensitive",
+            )[0],
+            0,
+        )
+        self.assertEqual(
+            self.run_command(
+                "workflow", "transition", "add", "--host", "api.example.test", "--name", "api",
+                "--from-state", "admin", "--to-state", "member", "--endpoint-id", str(endpoints["PATCH"]),
+                "--actor", "admin-a", "--authorization-effect", "revoke", "--capability", "admin-update",
+            )[0],
+            0,
+        )
+        self.assertEqual(
+            self.run_command(
+                "workflow", "transition", "add", "--host", "api.example.test", "--name", "api",
+                "--from-state", "owner-a", "--to-state", "owner-b", "--endpoint-id", str(endpoints["PATCH"]),
+                "--actor", "owner-a", "--authorization-effect", "transfer", "--capability", "project-delete",
+            )[0],
+            0,
+        )
+        self.assertEqual(
+            self.run_command(
+                "workflow", "transition", "add", "--host", "api.example.test", "--name", "api",
+                "--from-state", "draft", "--to-state", "completed", "--endpoint-id", str(endpoints["PATCH"]),
+                "--prerequisite", "approved", "--sensitive",
+            )[0],
+            0,
+        )
+        self.assertEqual(
+            self.run_command(
+                "workflow", "invariant", "add", "--host", "api.example.test", "--name", "api",
+                "--statement", "Removed members cannot read project resources.", "--state", "removed",
+                "--endpoint-id", str(endpoints["GET"]), "--actor", "member-a",
+                "--assumption", "Membership is checked on every request.", "--trust-boundary", "tenant",
+                "--sensitivity", "5",
+            )[0],
+            0,
+        )
+        result, output = self.run_command("queue", "--generate")
+        self.assertEqual(result, 0, output)
+        semantic_rows = self.fetchall(
+            "SELECT semantic_key, reasoning_json FROM hypotheses WHERE semantic_key IS NOT NULL"
+        )
+        kinds = {json.loads(row["reasoning_json"])["kind"] for row in semantic_rows}
+        self.assertTrue({"terminal-state", "authorization-change", "transition-prerequisite", "invariant", "trust-boundary"} <= kinds)
+        self.assertIn("Suggested control:", output)
+        count = len(semantic_rows)
+        self.assertEqual(self.run_command("queue", "--generate")[0], 0)
+        self.assertEqual(
+            self.fetchone("SELECT COUNT(*) AS count FROM hypotheses WHERE semantic_key IS NOT NULL")["count"],
+            count,
+        )
+        self.assertGreater(
+            self.fetchone("SELECT COUNT(*) AS count FROM hypotheses WHERE semantic_key IS NULL")["count"],
+            0,
+        )
+        self.assertEqual(
+            self.run_command(
+                "workflow", "learn", "--host", "api.example.test", "--name", "api",
+                "--observation", "The removal operation sets membership to inactive rather than deleting it.",
+                "--confidence", "4",
+            )[0],
+            0,
+        )
+        workflow = self.fetchone("SELECT semantics_json FROM application_workflows")
+        self.assertIn("inactive rather than deleting", workflow["semantics_json"])
+
     def test_import_fingerprint_deduplicates_changed_export_and_preserves_source_reference(self):
         self.assertEqual(
             self.run_command(

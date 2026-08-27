@@ -22,9 +22,12 @@ Capture program policy, eligible assets, exclusions, prohibited tests, rate ceil
 Persist symbolic identities in `identities`; never store cookies or bearer tokens there. Model tenant and role boundaries, sensitive objects, workflows, and lifecycle states in `application_workflows`.
 
 After the first `map`, ask only for the missing business context that changes a
-test decision, then save it through `workflow annotate`. Re-running `map`
-preserves symbolic actors, objects, states, sensitivity, and notes. Do not
-invent a tenant, owner, role, or lifecycle state from an endpoint name alone.
+test decision, then save it through `workflow annotate`. Add ordered lifecycle
+meaning with `workflow state set` and `workflow transition add`; record expected
+properties and their implementation assumptions with `workflow invariant add`.
+Re-running `map` preserves symbolic actors, objects, states, sensitivity, notes,
+and the semantic graph. Do not invent a tenant, owner, role, or lifecycle state
+from an endpoint name or a redacted HTTP value alone.
 
 ## P — Paths, Protocols, Provenance
 
@@ -38,10 +41,17 @@ Build hypotheses from `actor × action × object owner × object state × channe
 
 `3*boundary + 2*impact + 2*novelty + evidence - 2*duplicate_risk - test_cost - operational_risk`
 
-`queue --generate` supplies baseline hypotheses from imported evidence and saved
-workflow context. For a meaningful business-logic idea, use `hypothesis add`
-with the actual symbolic actor, owner boundary, object state, and statement;
-do not silently collapse it into a generic ownership check. Persist hypotheses
+`queue --generate` retains the baseline ownership/tenant hypotheses and adds
+semantic proposals only when an analyst has confirmed transitions, terminal
+states, invariants, authorization effects, or trust boundaries. A proposal
+stores a stable semantic key plus explainable reasoning: observed endpoint,
+expected invariant, possible implementation assumption, violation scenario,
+control request, one permitted change, and expected result. This is a workflow
+graph, not a vulnerability checklist; names such as replay or authorization
+bypass are labels after the semantic reasoning. Use `workflow learn` after a
+reviewed result to append an observation and refresh queued proposals. For a
+business-logic idea not represented by the graph, use `hypothesis add` with the
+actual symbolic actor, owner boundary, state, and statement. Persist hypotheses
 before testing. Use a control request, modify one variable, state expected
 versus observed behavior, and require analyst approval for active replay. The
 approval must bind the immutable plan hash, target, action, identity, request

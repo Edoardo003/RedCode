@@ -1,6 +1,6 @@
 # Stato implementazione RedCode
 
-Ultimo aggiornamento: 2026-08-25
+Ultimo aggiornamento: 2026-08-27
 
 Questo documento distingue il comportamento **verificato** dalle parti ancora
 in lavorazione. Non sostituisce la policy del programma, il manifest di
@@ -57,6 +57,16 @@ validazione dell'impatto e invio della submission.
   se consentito, resta manuale e limitato all'analista.
 - Nessun comando invia submission a HackerOne, Bugcrowd o altra piattaforma.
 
+### MAPPA semantico
+
+- Il modello di workflow conserva stati terminali, transizioni ordinate,
+  prerequisiti/postcondizioni, effetti di autorizzazione, capability, trust
+  boundary, invarianti, assunzioni e osservazioni di apprendimento.
+- `queue --generate` mantiene i seed ownership/tenant e aggiunge proposte
+  spiegabili derivate solo da semantica confermata dall'analista, con chiave
+  semantica stabile per la deduplicazione. I piani immutabili conservano il
+  ragionamento usato per crearli.
+
 ### Proxychains
 
 - Ogni processo avviato dal launcher `./redcode` riceve il prefisso
@@ -75,14 +85,14 @@ validazione dell'impatto e invio della submission.
 ## Verifiche già eseguite
 
 - Compilazione Python dei controller.
-- Test di migrazione SQLite dalla versione 1 alla 6.
+- Test di migrazione SQLite dalla versione 1 alla 7.
 - Test end-to-end del flusso bug bounty: onboarding, import Burp, redazione,
   mappa, piano, approvazione, evidenza, conferma e bozza report.
 - Regressioni dedicate per token in URL, manomissione della policy e manomissione
   dell'evidenza.
 - Test del probe MCP Burp con server HTTP fittizio compatibile con il protocollo
   MCP streamable HTTP.
-- Suite completa: 49 test superati; 4 test d'integrazione Juice Shop saltati
+- Suite completa: 72 test superati; 5 test d'integrazione saltati
   intenzionalmente perché non è configurato un servizio locale loopback.
 - Verifica sintattica degli script shell e controllo whitespace Git.
 

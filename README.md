@@ -188,6 +188,11 @@ The policy scope and the engagement manifest are intersected; the stricter rule
 wins. Burp traffic is imported from selected JSON/JSONL exports after local
 redaction rather than copying an entire proxy history into the workspace.
 
+MAPPA extends endpoint heuristics with an analyst-confirmed application model:
+workflow states and ordered transitions produce explicit invariants,
+implementation assumptions, and explainable single-variable hypotheses. It
+augments analyst reasoning; it does not replace approval or manual validation.
+
 The dedicated `bugbounty` agent has no direct HexStrike, Fetch, Playwright, or
 Burp MCP permissions. It prepares and audits bounded plans; any approved Burp
 request remains a manual analyst action.
@@ -212,14 +217,16 @@ output/
 
 JSON is the complete phase handoff. SQLite is a normalized secondary index; persistence is agent-driven and should be checked by the analyst. Generated output, databases, manifests, wordlists, downloaded HexStrike code, and custom Nuclei templates are excluded from Git.
 
-Bug-bounty hunts additionally persist program metadata, symbolic identities, normalized endpoints with Burp references, application workflows, ranked hypotheses, hunt sessions, and HackerOne outcomes. Live cookies and bearer tokens do not belong in these mapping tables.
+Bug-bounty hunts additionally persist program metadata, symbolic identities, normalized endpoints with Burp references, application workflows (including versioned semantic state/transition/invariant JSON), ranked hypotheses with stable semantic keys and reasoning, hunt sessions, and HackerOne outcomes. Live cookies and bearer tokens do not belong in these mapping tables.
 
 ## Project Status
 
 Implemented and tested in the repository:
 
+- schema version 7 with a backwards-compatible workflow-semantics migration;
+
 - engagement validation, activation, and exact/wildcard/CIDR/URL scope decisions;
-- schema initialization and version 1–5 to version 6 migration with backup;
+- schema initialization and version 1–6 to version 7 migration with backup;
 - runtime and MCP diagnostics;
 - agent/configuration/link contract checks;
 - shell syntax checks through CI;
