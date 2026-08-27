@@ -62,6 +62,7 @@ UUID_SEGMENT = re.compile(
 NUMERIC_SEGMENT = re.compile(r"^\d+$")
 OPAQUE_SEGMENT = re.compile(r"^[A-Za-z0-9_-]{20,}$")
 SHORT_IDENTIFIER_SEGMENT = re.compile(r"^[A-Za-z0-9_-]{6,}$")
+GENERIC_SHORT_IDENTIFIER_SEGMENT = re.compile(r"^[A-Za-z0-9]{6,}$")
 SAFE_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 FIELD_CAMEL_BOUNDARY = re.compile(r"([a-z0-9])([A-Z])")
 FIELD_SEPARATOR = re.compile(r"[^A-Za-z0-9]+")
@@ -485,17 +486,32 @@ def redact_body(value: Any) -> tuple[Any, int]:
 
 
 def normalize_path(path: str) -> tuple[str, bool]:
+    """Normalize the generic endpoint shape, independent of semantic overlay."""
     segments = path.split("/")
     normalized: list[str] = []
     has_object_id = False
     for segment in segments:
-        if is_identifier_segment(segment):
+        # Keep generic endpoint keys independent of semantic observations.  A
+        # short identifier is normalized only when it has no separators; route
+        # names such as ``campaigns_data_v2`` remain distinct endpoints.  The
+        # semantic overlay still observes broader candidates separately via
+        # path_identifier_segments.
+        if generic_identifier_segment(segment):
             normalized.append("{id}")
             has_object_id = True
         else:
             normalized.append(segment)
     result = "/".join(normalized) or "/"
     return result if result.startswith("/") else f"/{result}", has_object_id
+
+
+def generic_identifier_segment(segment: str) -> bool:
+    """Return whether a segment belongs to the generic endpoint key shape."""
+    if NUMERIC_SEGMENT.fullmatch(segment) or UUID_SEGMENT.fullmatch(segment) or OPAQUE_SEGMENT.fullmatch(segment):
+        return True
+    if not GENERIC_SHORT_IDENTIFIER_SEGMENT.fullmatch(segment):
+        return False
+    return bool(re.search(r"[A-Za-z]", segment) and re.search(r"\d", segment))
 
 
 def is_identifier_segment(segment: str) -> bool:

@@ -827,8 +827,46 @@ class BugBountyControlTests(unittest.TestCase):
     def test_identifier_unknown_and_conflicting_evidence_stay_explicit(self):
         self.assertTrue(bugbounty.is_identifier_segment("abc123"))
         self.assertEqual(bugbounty.normalize_path("/api/v1/abcdef"), ("/api/v1/abcdef", False))
+        # Static/versioned route names are part of the generic endpoint set;
+        # semantic identifier candidates must remain an overlay only.
+        self.assertEqual(
+            bugbounty.normalize_path("/engagement/campaigns_data_v2"),
+            ("/engagement/campaigns_data_v2", False),
+        )
+        self.assertEqual(
+            bugbounty.normalize_path("/api/segments/seg100/apps/app200"),
+            ("/api/segments/{id}/apps/{id}", True),
+        )
         self.assertEqual(bugbounty.normalize_field_label("appGroupId"), "app_group_id")
         self.assertFalse(bugbounty.is_safe_identifier_field("email"))
+
+    def test_identifier_overlay_preserves_generic_endpoint_parity(self):
+        self.assertEqual(
+            self.run_command(
+                "onboard", "--program-name", "Example", "--policy-file", str(self.policy),
+                "--scope", "*.example.test", "--reviewed-by", "analyst",
+            )[0],
+            0,
+        )
+        self.assertEqual(
+            self.run_command("identity", "add", "--label", "user-a", "--role", "member")[0],
+            0,
+        )
+        export = self.root / "endpoint-parity.json"
+        export.write_text(
+            json.dumps([
+                {"id": "static-route", "url": "https://api.example.test/engagement/campaigns_data_v2", "method": "GET"},
+                {"id": "object-route", "url": "https://api.example.test/engagement/123", "method": "GET"},
+            ]),
+            encoding="utf-8",
+        )
+        result, output = self.run_command("ingest", "--file", str(export), "--identity", "user-a")
+        self.assertEqual(result, 0, output)
+        endpoints = self.fetchall("SELECT method, path_template FROM endpoints ORDER BY path_template")
+        self.assertEqual(
+            [(row["method"], row["path_template"]) for row in endpoints],
+            [("GET", "/engagement/campaigns_data_v2"), ("GET", "/engagement/{id}")],
+        )
 
     def test_burp_probe_checks_standard_mcp_tools(self):
         class Handler(BaseHTTPRequestHandler):

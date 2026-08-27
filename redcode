@@ -3,10 +3,38 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+load_dotenv() {
+  local line key value
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Keep the launcher compatible with the simple KEY=VALUE contract used by
+    # .env.example, while preserving variables explicitly supplied by the
+    # caller.  In particular, an exported REDCODE_DB must win over .env.
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    if [ -z "$line" ] || [ "${line#\#}" != "$line" ] || [ "${line#*=}" = "$line" ]; then
+      continue
+    fi
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    if [[ -v $key ]]; then
+      continue
+    fi
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ ${#value} -ge 2 && "$value" == \"*\" ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ ${#value} -ge 2 && "$value" == \'*\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    export "$key=$value"
+  done < "$DIR/.env"
+}
+
 if [ -f "$DIR/.env" ]; then
-  set -a
-  source "$DIR/.env"
-  set +a
+  load_dotenv
 fi
 
 : "${HEXSTRIKE_URL:=http://localhost:8888}"

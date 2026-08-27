@@ -1,9 +1,30 @@
+import os
 import json
 import re
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def find_bash():
+    configured = shutil.which("bash")
+    if configured:
+        return configured
+    if os.name == "nt":
+        for candidate in (
+            Path(os.environ.get("ProgramFiles", "")) / "Git" / "bin" / "bash.exe",
+            Path(os.environ.get("ProgramFiles", "")) / "Git" / "usr" / "bin" / "bash.exe",
+        ):
+            if candidate.is_file():
+                return str(candidate)
+    return None
+
+
+BASH = find_bash()
 
 
 def parse_jsonc(path: Path):
@@ -164,6 +185,48 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertIn("exec_with_prefix python3", launcher)
         self.assertIn("exec_with_prefix opencode", launcher)
         self.assertIn("run_with_prefix python3", launcher)
+
+    @unittest.skipUnless(BASH, "bash is required to execute the launcher")
+    def test_launcher_environment_precedence_preserves_explicit_database(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            launcher = root / "redcode"
+            launcher.write_text((ROOT / "redcode").read_text(encoding="utf-8"), encoding="utf-8")
+            os.chmod(launcher, 0o755)
+            (root / ".env").write_text(
+                "REDCODE_DB=from-dotenv.db\nREDCODE_COMMAND_PREFIX=\"proxychains4 -q\"\n",
+                encoding="utf-8",
+            )
+            (bin_dir / "proxychains4").write_text(
+                "#!/usr/bin/env bash\n"
+                "if [ \"${1:-}\" = \"-q\" ]; then shift; fi\n"
+                "exec \"$@\"\n",
+                encoding="utf-8",
+            )
+            (bin_dir / "python3").write_text(
+                "#!/usr/bin/env bash\n"
+                "printf 'REDCODE_DB=%s\\n' \"${REDCODE_DB-}\"\n",
+                encoding="utf-8",
+            )
+            for executable in (bin_dir / "proxychains4", bin_dir / "python3"):
+                os.chmod(executable, 0o755)
+
+            environment = os.environ.copy()
+            environment["PATH"] = str(bin_dir) + os.pathsep + environment.get("PATH", "")
+            environment["REDCODE_DB"] = str(root / "explicit.db")
+            result = subprocess.run(
+                [BASH, str(launcher), "doctor"],
+                cwd=root,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn(f"REDCODE_DB={root / 'explicit.db'}", result.stdout)
+            self.assertNotIn("from-dotenv.db", result.stdout)
 
     def test_python_dependencies_use_project_virtualenv(self):
         setup = (ROOT / "setup.sh").read_text(encoding="utf-8")
