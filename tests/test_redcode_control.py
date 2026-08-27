@@ -111,6 +111,31 @@ class ArsenalRuntimeConfigTests(unittest.TestCase):
 
 
 class DatabaseTests(unittest.TestCase):
+    def test_v7_database_migrates_identifier_registry(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db = Path(temp_dir) / "v7.db"
+            connection = sqlite3.connect(db)
+            connection.executescript(
+                (Path(__file__).resolve().parents[1] / "schema.sql")
+                .read_text(encoding="utf-8")
+            )
+            connection.execute("DROP TABLE identifier_registry")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 8")
+            connection.execute("PRAGMA user_version = 7")
+            connection.commit()
+            connection.close()
+
+            version, backup = control.migrate_database(db)
+            self.assertEqual(version, 8)
+            self.assertIsNotNone(backup)
+            connection = sqlite3.connect(db)
+            self.assertIn("identifier_registry", control.table_names(connection))
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM schema_migrations WHERE version = 8").fetchone()[0],
+                1,
+            )
+            connection.close()
+
     def test_fresh_database_uses_schema_v8(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db = Path(temp_dir) / "fresh.db"
