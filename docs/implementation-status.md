@@ -66,6 +66,14 @@ validazione dell'impatto e invio della submission.
   spiegabili derivate solo da semantica confermata dall'analista, con chiave
   semantica stabile per la deduplicazione. I piani immutabili conservano il
   ragionamento usato per crearli.
+- La migration 008 aggiunge la correlazione degli identificatori semantici:
+  path, query, request e response producono solo fingerprint HMAC locali e
+  contesto di campo/percorso. `identifier list`, `identifier confirm` e
+  `identifier reject` rendono esplicita la revisione dei ruoli; le relazioni
+  osservate restano lead finché l'analista non usa `identifier relationship
+  confirm`. Solo le relazioni confermate alimentano nuove ipotesi, mantenendo il
+  template generico per deduplicazione e aggiungendo un display template
+  spiegabile.
 
 ### Proxychains
 
@@ -85,14 +93,14 @@ validazione dell'impatto e invio della submission.
 ## Verifiche già eseguite
 
 - Compilazione Python dei controller.
-- Test di migrazione SQLite dalla versione 1 alla 7.
+- Test di migrazione SQLite dalla versione 1 alla 8.
 - Test end-to-end del flusso bug bounty: onboarding, import Burp, redazione,
   mappa, piano, approvazione, evidenza, conferma e bozza report.
 - Regressioni dedicate per token in URL, manomissione della policy e manomissione
   dell'evidenza.
 - Test del probe MCP Burp con server HTTP fittizio compatibile con il protocollo
   MCP streamable HTTP.
-- Suite completa: 72 test superati; 5 test d'integrazione saltati
+- Suite completa: 74 test superati; 5 test d'integrazione saltati
   intenzionalmente perché non è configurato un servizio locale loopback.
 - Verifica sintattica degli script shell e controllo whitespace Git.
 

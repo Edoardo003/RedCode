@@ -47,7 +47,7 @@ Warnings do not make the command fail. Configuration, database, HexStrike, or MC
 ./redcode db migrate
 ```
 
-The current schema version is 7. Existing version 1–6 databases are backed up before migration using a name such as `redcode.db.v6-backup-YYYYMMDDHHMMSS`. Re-running the command against an up-to-date database is idempotent and does not create another backup.
+The current schema version is 8. Existing version 1–7 databases are backed up before migration using a name such as `redcode.db.v7-backup-YYYYMMDDHHMMSS`. Migration 008 adds the redacted identifier registry and is independent of workflow migration 007. Re-running the command against an up-to-date database is idempotent and does not create another backup.
 
 Schema version 2 adds:
 
@@ -86,6 +86,13 @@ workflow can persist analyst-confirmed states, ordered transitions, invariants,
 assumptions, and reviewed observations. Generated semantic hypotheses receive a
 stable key and reasoning JSON for explainability and deduplication; existing
 generic ownership hypotheses remain compatible.
+
+Schema version 8 adds the identifier-semantics extension. Selected path,
+query, request-body, and response-body identifiers are correlated with a local
+engagement-scoped HMAC fingerprint. Endpoint metadata stores generic and
+semantic display templates plus candidate roles, while workflow JSON stores
+relationship leads and analyst confirmations. Raw identifier values and the
+HMAC key remain local and are never committed.
 
 JSON findings remain the richer agent-to-agent handoff. SQLite provides normalized state and indexing.
 

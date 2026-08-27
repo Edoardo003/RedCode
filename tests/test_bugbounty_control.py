@@ -748,6 +748,88 @@ class BugBountyControlTests(unittest.TestCase):
             2,
         )
 
+    def test_identifier_semantics_are_redacted_and_analyst_confirmed(self):
+        self.assertEqual(
+            self.run_command(
+                "onboard", "--program-name", "Example", "--policy-file", str(self.policy),
+                "--scope", "*.example.test", "--reviewed-by", "analyst",
+            )[0],
+            0,
+        )
+        export = self.root / "identifier.json"
+        messages = []
+        for index in range(3):
+            messages.append({
+                "id": f"identifier-{index}",
+                "url": f"https://api.example.test/api/segments/seg{index + 100}/apps/app{index + 200}",
+                "method": "GET",
+                "request": {"body": {"segmentId": f"seg{index + 100}", "appGroupId": f"app{index + 200}"}},
+                "response": {"body": {"segmentId": f"seg{index + 100}", "appGroupId": f"app{index + 200}"}},
+            })
+        export.write_text(json.dumps(messages), encoding="utf-8")
+        result, output = self.run_command("ingest", "--file", str(export), "--include-bodies")
+        self.assertEqual(result, 0, output)
+        self.assertNotIn("seg100", output)
+        self.assertNotIn("app200", output)
+        self.assertTrue((self.root / "output" / ".redcode" / "identifier-hmac.key").is_file())
+        registry = self.fetchall("SELECT fingerprint, roles_json, contexts_json FROM identifier_registry")
+        self.assertGreaterEqual(len(registry), 6)
+        for row in registry:
+            self.assertNotIn("seg100", row["roles_json"] + row["contexts_json"])
+            self.assertNotIn("app200", row["roles_json"] + row["contexts_json"])
+            self.assertTrue(row["fingerprint"].startswith("hmac-sha256:"))
+        endpoint = self.fetchone("SELECT id, path_template, metadata_json FROM endpoints")
+        self.assertEqual(endpoint["path_template"], "/api/segments/{id}/apps/{id}")
+        semantic_path = json.loads(endpoint["metadata_json"])["semantic_path"]
+        self.assertEqual([item["position"] for item in semantic_path["parameters"]], [3, 5])
+        self.assertTrue(all(item["candidates"] for item in semantic_path["parameters"]))
+        self.assertEqual(self.run_command("map")[0], 0)
+        workflow = self.fetchone("SELECT id, semantics_json FROM application_workflows")
+        leads = json.loads(workflow["semantics_json"])["identifier_leads"]
+        self.assertTrue(leads)
+        self.assertEqual(
+            self.run_command(
+                "identifier", "confirm", "--endpoint-id", str(endpoint["id"]), "--position", "3",
+                "--role", "segment_id", "--confirmed-by", "analyst",
+            )[0],
+            0,
+        )
+        self.assertEqual(
+            self.run_command(
+                "identifier", "confirm", "--endpoint-id", str(endpoint["id"]), "--position", "5",
+                "--role", "app_group_id", "--confirmed-by", "analyst",
+            )[0],
+            0,
+        )
+        self.assertEqual(
+            self.run_command(
+                "identifier", "confirm", "--endpoint-id", str(endpoint["id"]), "--position", "3",
+                "--role", "workspace_id", "--confirmed-by", "analyst",
+            )[0],
+            1,
+        )
+        self.assertEqual(
+            self.run_command(
+                "identifier", "relationship", "confirm", "--workflow-id", str(workflow["id"]),
+                "--from-role", "segment_id", "--to-role", "app_group_id", "--relation", "scoped-by",
+                "--confirmed-by", "analyst",
+            )[0],
+            0,
+        )
+        self.assertEqual(self.run_command("queue", "--generate")[0], 0)
+        relationship = self.fetchone(
+            "SELECT reasoning_json FROM hypotheses WHERE reasoning_json LIKE '%identifier-relationship%'"
+        )
+        self.assertIsNotNone(relationship)
+        reasoning = json.loads(relationship["reasoning_json"])
+        self.assertEqual(reasoning["kind"], "identifier-relationship")
+
+    def test_identifier_unknown_and_conflicting_evidence_stay_explicit(self):
+        self.assertTrue(bugbounty.is_identifier_segment("abc123"))
+        self.assertEqual(bugbounty.normalize_path("/api/v1/abcdef"), ("/api/v1/abcdef", False))
+        self.assertEqual(bugbounty.normalize_field_label("appGroupId"), "app_group_id")
+        self.assertFalse(bugbounty.is_safe_identifier_field("email"))
+
     def test_burp_probe_checks_standard_mcp_tools(self):
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):

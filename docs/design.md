@@ -58,6 +58,6 @@ The goal is observable context use, not an unsupported promise of a particular t
 
 ## Persistent Bug-Bounty State
 
-MAPPA hunting state is normalized in SQLite rather than reconstructed from model context. Program metadata, symbolic identities, endpoints, workflows, hypotheses, sessions, and submission outcomes survive compaction and restarts. Raw HTTP evidence remains file-based and is referenced by Burp history identifiers or evidence paths; secrets are not copied into mapping tables.
+MAPPA hunting state is normalized in SQLite rather than reconstructed from model context. Program metadata, symbolic identities, endpoints, workflows, hypotheses, sessions, and submission outcomes survive compaction and restarts. Raw HTTP evidence remains file-based and is referenced by Burp history identifiers or evidence paths; secrets and raw identifiers are not copied into mapping tables. Identifier semantics use an engagement-scoped local HMAC registry and endpoint metadata so semantic role and relationship review remains explainable without retaining values.
 
 The `bugbounty` specialist owns application modeling and the hypothesis queue. Existing scanner and exploiter agents consume that state for approved discovery and validation, avoiding another orchestration layer.
