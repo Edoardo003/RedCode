@@ -1,5 +1,5 @@
 PRAGMA foreign_keys = ON;
-PRAGMA user_version = 7;
+PRAGMA user_version = 8;
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version INTEGER PRIMARY KEY,
@@ -19,6 +19,8 @@ INSERT OR IGNORE INTO schema_migrations (version, name)
 VALUES (6, 'burp_provenance_dedupe');
 INSERT OR IGNORE INTO schema_migrations (version, name)
 VALUES (7, 'workflow_semantics');
+INSERT OR IGNORE INTO schema_migrations (version, name)
+VALUES (8, 'identifier_semantics');
 
 CREATE TABLE IF NOT EXISTS engagements (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -220,6 +222,17 @@ CREATE TABLE IF NOT EXISTS application_workflows (
   UNIQUE(engagement_id, workflow_key)
 );
 
+CREATE TABLE IF NOT EXISTS identifier_registry (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  engagement_id INTEGER NOT NULL REFERENCES engagements(id),
+  fingerprint TEXT NOT NULL,
+  roles_json TEXT NOT NULL DEFAULT '[]',
+  contexts_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(engagement_id, fingerprint)
+);
+
 CREATE TABLE IF NOT EXISTS hypotheses (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   engagement_id INTEGER NOT NULL REFERENCES engagements(id),
@@ -298,6 +311,7 @@ CREATE INDEX IF NOT EXISTS idx_identities_engagement ON identities(engagement_id
 CREATE INDEX IF NOT EXISTS idx_endpoints_engagement_host ON endpoints(engagement_id, host);
 CREATE INDEX IF NOT EXISTS idx_endpoints_coverage ON endpoints(engagement_id, coverage_status);
 CREATE INDEX IF NOT EXISTS idx_workflows_engagement ON application_workflows(engagement_id);
+CREATE INDEX IF NOT EXISTS idx_identifier_registry_engagement ON identifier_registry(engagement_id);
 CREATE INDEX IF NOT EXISTS idx_hypotheses_queue ON hypotheses(engagement_id, status, priority DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_hypotheses_semantic_identity
   ON hypotheses(engagement_id, semantic_key);

@@ -44,7 +44,7 @@ except ModuleNotFoundError:
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 MANIFEST_VERSION = 1
 ACTIONS = {
     "recon",
@@ -346,7 +346,7 @@ def migrate_database(path: Path, backup: bool = True) -> tuple[int, Path | None]
             return SCHEMA_VERSION, backup_path
 
         version = connection.execute("PRAGMA user_version").fetchone()[0]
-        if version not in {0, 1, 2, 3, 4, 5, 6, 7}:
+        if version not in {0, 1, 2, 3, 4, 5, 6, 7, 8}:
             raise RuntimeError(f"unsupported database schema version: {version}")
 
         required_tables = {
@@ -360,6 +360,7 @@ def migrate_database(path: Path, backup: bool = True) -> tuple[int, Path | None]
             "identities",
             "endpoints",
             "application_workflows",
+            "identifier_registry",
             "hypotheses",
             "hunt_sessions",
             "bug_bounty_submissions",
@@ -433,6 +434,12 @@ def migrate_database(path: Path, backup: bool = True) -> tuple[int, Path | None]
         if version == 6:
             apply_migration(7, "007_workflow_semantics.sql", "workflow_semantics")
             version = 7
+        if version == 7:
+            apply_migration(8, "008_identifier_semantics.sql", "identifier_semantics")
+            version = 8
+        if version == 8 and "identifier_registry" not in table_names(connection):
+            # Repair an interrupted v8 initialization without touching 007.
+            apply_migration(8, "008_identifier_semantics.sql", "identifier_semantics")
         if version == 6 and not required_tables <= table_names(connection):
             apply_schema(connection)
             connection.commit()
@@ -558,6 +565,7 @@ class Doctor:
             "engagements", "assets", "approvals", "evidence",
             "bug_bounty_programs", "identities", "endpoints",
             "application_workflows", "hypotheses", "hunt_sessions",
+            "identifier_registry",
             "bug_bounty_submissions", "policy_snapshots",
             "program_scope_rules", "program_restrictions", "burp_import_runs",
             "burp_message_refs", "test_plans", "approval_executions",
