@@ -127,6 +127,44 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertNotIn("@latest", config)
         self.assertNotIn("@latest", setup)
 
+    def test_bug_bounty_agent_is_local_assistance_only(self):
+        agent = self.config["agent"]["bugbounty"]
+        for permission in ("filesystem_*", "sqlite_*"):
+            self.assertEqual(agent["permission"][permission], "allow")
+        for permission in ("hexstrike_*", "burp_*", "playwright_*", "fetch_*"):
+            self.assertEqual(agent["permission"][permission], "deny")
+        self.assertTrue(self.config["mcp"]["burp"]["enabled"])
+        self.assertTrue((ROOT / ".opencode/command/bugbounty.md").is_file())
+        self.assertTrue((ROOT / ".opencode/skills/mappa-bugbounty/SKILL.md").is_file())
+
+    def test_schema_contains_bug_bounty_state(self):
+        schema = (ROOT / "schema.sql").read_text(encoding="utf-8")
+        for table in (
+            "bug_bounty_programs", "identities", "endpoints",
+            "application_workflows", "hypotheses", "hunt_sessions",
+            "bug_bounty_submissions", "policy_snapshots",
+            "program_scope_rules", "program_restrictions", "burp_import_runs",
+            "burp_message_refs", "test_plans", "approval_executions",
+            "hypothesis_events",
+        ):
+            self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", schema)
+
+    def test_bug_bounty_assistant_control_plane_is_tracked(self):
+        launcher = (ROOT / "redcode").read_text(encoding="utf-8")
+        controller = ROOT / "scripts" / "bugbounty_control.py"
+        docs = ROOT / "docs" / "bugbounty-assistant.md"
+        self.assertTrue(controller.is_file())
+        self.assertTrue(docs.is_file())
+        self.assertIn('bugbounty)', launcher)
+        self.assertIn("bugbounty_control.py", launcher)
+
+    def test_launcher_enforces_configured_command_prefix(self):
+        launcher = (ROOT / "redcode").read_text(encoding="utf-8")
+        self.assertIn(': "${REDCODE_COMMAND_PREFIX:=proxychains4 -q}"', launcher)
+        self.assertIn("exec_with_prefix python3", launcher)
+        self.assertIn("exec_with_prefix opencode", launcher)
+        self.assertIn("run_with_prefix python3", launcher)
+
     def test_python_dependencies_use_project_virtualenv(self):
         setup = (ROOT / "setup.sh").read_text(encoding="utf-8")
         launcher = (ROOT / "redcode").read_text(encoding="utf-8")
@@ -137,6 +175,17 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertIn('$DIR/.venv/bin', launcher)
         self.assertIn(".venv/", gitignore.splitlines())
         self.assertIn('pip install "mcp>=1.6,<3" ', setup)
+
+    def test_setup_configures_narrow_proxychains_bypasses(self):
+        setup = (ROOT / "setup.sh").read_text(encoding="utf-8")
+        env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+        self.assertIn("localnet 127.0.0.0/255.0.0.0", setup)
+        self.assertIn("localnet ::1/128", setup)
+        self.assertIn("255.255.255.255", setup)
+        self.assertIn(".redcode-backup", setup)
+        self.assertIn("--max-time 3", setup)
+        self.assertIn("BURP_MCP_URL=http://10.10.10.10:9876", env_example)
+        self.assertNotIn("BURP_MCP_URL=http://10.10.10.10:9876/mcp", env_example)
 
     def test_arsenal_bridge_is_disabled_until_launcher_handshake(self):
         arsenal = self.config["mcp"]["arsenal"]

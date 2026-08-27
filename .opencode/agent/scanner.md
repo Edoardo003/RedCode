@@ -16,6 +16,8 @@ Use configured MCP tools and the matching `.opencode/skills/` instructions. Comm
 
 The loaded skill defines accepted wrapper arguments, prohibited flags, throttling, and retry behavior. Do not write a custom scanner, fuzzer, login tester, or brute-force script when a dedicated tool exists. Preserve tool failures rather than converting them into findings.
 
+For bug-bounty engagements, consume the MAPPA endpoint and hypothesis state created by `@bugbounty`. Burp MCP may be used for in-scope history analysis and analyst-reviewed requests; never discard provenance or restart a reliable map from chat.
+
 ## Workflow
 
 1. Read authorized assets and prioritize them by exposure, technology, and prior evidence.

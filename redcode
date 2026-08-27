@@ -12,13 +12,34 @@ fi
 : "${HEXSTRIKE_URL:=http://localhost:8888}"
 : "${REDCODE_DB:=$DIR/redcode.db}"
 : "${REDCODE_ENGAGEMENT:=$DIR/engagement.json}"
+: "${REDCODE_COMMAND_PREFIX:=proxychains4 -q}"
 : "${ARSENAL_URL:=http://127.0.0.1:8000}"
 : "${ARSENAL_SESSION:=$DIR/output/.redcode/current-arsenal-session.json}"
 : "${ARSENAL_WORKSPACE:=}"
 : "${REDCODE_MODE:=}"
 : "${PROXY_URL:=}"
-export HEXSTRIKE_URL REDCODE_DB REDCODE_ENGAGEMENT ARSENAL_URL ARSENAL_SESSION
-export ARSENAL_WORKSPACE REDCODE_MODE PROXY_URL
+export HEXSTRIKE_URL REDCODE_DB REDCODE_ENGAGEMENT REDCODE_COMMAND_PREFIX
+export ARSENAL_URL ARSENAL_SESSION ARSENAL_WORKSPACE REDCODE_MODE PROXY_URL
+
+# All processes launched through this entry point receive the configured prefix.
+# Use a simple space-separated executable and arguments (the default is
+# "proxychains4 -q"); parsing never uses eval, so shell metacharacters are not
+# interpreted. Local state commands are prefixed too to keep launcher behavior
+# consistent, although most of them do not make network requests.
+declare -a REDCODE_PREFIX
+read -r -a REDCODE_PREFIX <<< "$REDCODE_COMMAND_PREFIX"
+if [ "${#REDCODE_PREFIX[@]}" -eq 0 ] || ! command -v "${REDCODE_PREFIX[0]}" >/dev/null 2>&1; then
+  echo "RedCode command-prefix error: cannot run '$REDCODE_COMMAND_PREFIX'. Install proxychains4 or set REDCODE_COMMAND_PREFIX to a compatible wrapper." >&2
+  exit 127
+fi
+
+run_with_prefix() {
+  "${REDCODE_PREFIX[@]}" "$@"
+}
+
+exec_with_prefix() {
+  exec "${REDCODE_PREFIX[@]}" "$@"
+}
 
 # setup.sh installs Python dependencies here. Keeping it on PATH also lets
 # OpenCode resolve the Python-based MCP server executables.
@@ -43,18 +64,21 @@ fi
 case "${1:-}" in
   gateway)
     shift
-    exec python3 "$DIR/scripts/redcode_gateway.py" "$@"
+    exec_with_prefix python3 "$DIR/scripts/redcode_gateway.py" "$@"
     ;;
   doctor|db|engagement|scope|arsenal|runtime)
-    exec python3 "$DIR/scripts/redcode_control.py" "$@"
+    exec_with_prefix python3 "$DIR/scripts/redcode_control.py" "$@"
+    ;;
+  bugbounty)
+    exec_with_prefix python3 "$DIR/scripts/bugbounty_control.py" "${@:2}"
     ;;
   stats)
     shift
     if [ "${1:-}" = "--all" ]; then
       shift
-      exec opencode stats "$@"
+      exec_with_prefix opencode stats "$@"
     fi
-    exec opencode stats --project "$DIR" "$@"
+    exec_with_prefix opencode stats --project "$DIR" "$@"
     ;;
 esac
 
@@ -121,7 +145,7 @@ fi
 case "$MODE" in
   standalone)
     export REDCODE_MODE="standalone"
-    python3 "$DIR/scripts/redcode_control.py" runtime activate \
+    run_with_prefix python3 "$DIR/scripts/redcode_control.py" runtime activate \
       --mode standalone --quiet
     ;;
   arsenal)
@@ -134,11 +158,11 @@ case "$MODE" in
     if [ -n "$WORKSPACE" ]; then
       connect_args+=(--workspace "$WORKSPACE")
     fi
-    python3 "$DIR/scripts/redcode_control.py" "${connect_args[@]}"
+    run_with_prefix python3 "$DIR/scripts/redcode_control.py" "${connect_args[@]}"
     export REDCODE_MODE="arsenal" ARSENAL_URL ARSENAL_SESSION
     export ARSENAL_WORKSPACE="$WORKSPACE"
     OPENCODE_CONFIG_CONTENT="$(
-      python3 "$DIR/scripts/redcode_control.py" arsenal opencode-config
+      run_with_prefix python3 "$DIR/scripts/redcode_control.py" arsenal opencode-config
     )"
     export OPENCODE_CONFIG_CONTENT
     ;;
@@ -149,8 +173,8 @@ case "$MODE" in
 esac
 
 if [ "$MODE" = "standalone" ] && [ -f "$REDCODE_ENGAGEMENT" ]; then
-  python3 "$DIR/scripts/redcode_control.py" engagement activate \
+  run_with_prefix python3 "$DIR/scripts/redcode_control.py" engagement activate \
     --file "$REDCODE_ENGAGEMENT" --quiet
 fi
 
-exec opencode "${OPENCODE_ARGS[@]}"
+exec_with_prefix opencode "${OPENCODE_ARGS[@]}"

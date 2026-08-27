@@ -35,7 +35,7 @@ if ! command -v apt-get >/dev/null 2>&1 || ! command -v apt-cache >/dev/null 2>&
 fi
 
 declare -A PROFILE_PACKAGES=(
-  [core]="nmap dnsutils whois jq curl git"
+  [core]="nmap dnsutils whois jq curl git proxychains4"
   [web]="gobuster ffuf nikto sqlmap hydra whatweb"
   [network]="masscan arp-scan smbclient enum4linux"
   [ctf]="gdb binutils checksec radare2 binwalk foremost steghide libimage-exiftool-perl john hashcat"

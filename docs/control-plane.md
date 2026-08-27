@@ -47,7 +47,7 @@ Warnings do not make the command fail. Configuration, database, HexStrike, or MC
 ./redcode db migrate
 ```
 
-The current schema version is 2. An existing version 1 database is backed up before migration using a name such as `redcode.db.v1-backup-YYYYMMDDHHMMSS`. Re-running the command against an up-to-date database is idempotent and does not create another backup.
+The current schema version is 6. Existing version 1–5 databases are backed up before migration using a name such as `redcode.db.v5-backup-YYYYMMDDHHMMSS`. Re-running the command against an up-to-date database is idempotent and does not create another backup.
 
 Schema version 2 adds:
 
@@ -57,6 +57,29 @@ Schema version 2 adds:
 - exit codes and structured tool errors;
 - evidence metadata and SHA-256 fields;
 - relationships between findings.
+
+Schema version 3 adds persistent bug-bounty state:
+
+- HackerOne program and policy metadata;
+- symbolic identities without live secrets;
+- normalized endpoints with Burp history provenance;
+- application workflows and lifecycle states;
+- ranked MAPPA hypotheses;
+- hunt sessions and submission outcomes.
+
+Schema version 4 turns that state into a guided assistant workflow:
+
+- reviewed policy snapshots plus structured program scope and restrictions;
+- audited, redacted Burp import runs and message provenance;
+- immutable test plans, tied approvals, and execution records;
+- append-only hypothesis events for resume and review.
+
+Schema version 5 binds every test plan to its reviewed policy snapshot. Version 6
+adds source-aware Burp provenance plus redacted-request fingerprints, so selected
+exports can be re-imported idempotently without treating two Burp projects' local
+message IDs as the same record. Updating
+the policy supersedes drafts and cancels active approvals before a new plan can
+be approved.
 
 JSON findings remain the richer agent-to-agent handoff. SQLite provides normalized state and indexing.
 

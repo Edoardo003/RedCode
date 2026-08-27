@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -43,7 +44,7 @@ except ModuleNotFoundError:
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 6
 MANIFEST_VERSION = 1
 ACTIONS = {
     "recon",
@@ -53,6 +54,7 @@ ACTIONS = {
     "socialeng",
     "templates",
     "report",
+    "hunt",
     "ctf",
 }
 ASSESSMENT_ACTIONS = [
@@ -63,6 +65,7 @@ ASSESSMENT_ACTIONS = [
     "socialeng",
     "templates",
     "report",
+    "hunt",
 ]
 CAPABILITY_PROFILES = {
     "recon": ["nmap", "amass", "subfinder", "httpx"],
@@ -73,6 +76,7 @@ CAPABILITY_PROFILES = {
     "ctf-forensics": ["file", "binwalk", "exiftool", "foremost", "volatility3"],
 }
 OPENCODE_AGENTS = {
+    "bugbounty",
     "redcode",
     "recon",
     "scanner",
@@ -315,9 +319,9 @@ def apply_schema(connection: sqlite3.Connection) -> None:
     connection.executescript((ROOT / "schema.sql").read_text(encoding="utf-8"))
 
 
-def backup_database(connection: sqlite3.Connection, path: Path) -> Path:
+def backup_database(connection: sqlite3.Connection, path: Path, version: int) -> Path:
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S")
-    backup_path = path.with_name(f"{path.name}.v1-backup-{stamp}")
+    backup_path = path.with_name(f"{path.name}.v{version}-backup-{stamp}")
     backup_connection = sqlite3.connect(backup_path)
     try:
         connection.backup(backup_connection)
@@ -342,46 +346,89 @@ def migrate_database(path: Path, backup: bool = True) -> tuple[int, Path | None]
             return SCHEMA_VERSION, backup_path
 
         version = connection.execute("PRAGMA user_version").fetchone()[0]
-        scan_columns = table_columns(connection, "scans")
-        if {"phase", "subdomain", "engagement_id", "asset_id"} <= scan_columns:
-            required_tables = {
-                "schema_migrations",
-                "engagements",
-                "assets",
-                "approvals",
-                "evidence",
-                "finding_relations",
-            }
-            if version == SCHEMA_VERSION and required_tables <= tables:
-                return SCHEMA_VERSION, None
-            if backup:
-                backup_path = backup_database(connection, path)
-            apply_schema(connection)
-            connection.commit()
-            return SCHEMA_VERSION, backup_path
-
-        if version not in {0, 1}:
+        if version not in {0, 1, 2, 3, 4, 5, 6}:
             raise RuntimeError(f"unsupported database schema version: {version}")
 
+        required_tables = {
+            "schema_migrations",
+            "engagements",
+            "assets",
+            "approvals",
+            "evidence",
+            "finding_relations",
+            "bug_bounty_programs",
+            "identities",
+            "endpoints",
+            "application_workflows",
+            "hypotheses",
+            "hunt_sessions",
+            "bug_bounty_submissions",
+            "policy_snapshots",
+            "program_scope_rules",
+            "program_restrictions",
+            "burp_import_runs",
+            "burp_message_refs",
+            "test_plans",
+            "approval_executions",
+            "hypothesis_events",
+        }
+        scan_columns = table_columns(connection, "scans")
+        plan_columns = table_columns(connection, "test_plans")
+        burp_ref_columns = table_columns(connection, "burp_message_refs")
+        current = version == SCHEMA_VERSION and required_tables <= tables
+        if (
+            current
+            and {"phase", "subdomain", "engagement_id", "asset_id"} <= scan_columns
+            and {"policy_snapshot_id"} <= plan_columns
+            and {"source_message_ref", "request_fingerprint"} <= burp_ref_columns
+        ):
+            return SCHEMA_VERSION, None
+
         if backup:
-            backup_path = backup_database(connection, path)
-        migration = (ROOT / "migrations" / "002_control_plane.sql").read_text(
-            encoding="utf-8"
-        )
-        script = f"""
-BEGIN IMMEDIATE;
-CREATE TABLE IF NOT EXISTS schema_migrations (
-  version INTEGER PRIMARY KEY,
-  name TEXT NOT NULL,
-  applied_at TEXT DEFAULT (datetime('now'))
-);
-INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (1, 'initial');
-{migration}
-INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (2, 'control_plane');
-PRAGMA user_version = 2;
-COMMIT;
-"""
-        connection.executescript(script)
+            backup_path = backup_database(connection, path, version)
+
+        def apply_migration(version_number: int, filename: str, name: str) -> None:
+            migration = (ROOT / "migrations" / filename).read_text(encoding="utf-8")
+            connection.executescript(
+                "BEGIN IMMEDIATE;\n"
+                + migration
+                + "\nINSERT OR IGNORE INTO schema_migrations(version, name) "
+                f"VALUES ({version_number}, '{name}');\n"
+                + f"PRAGMA user_version = {version_number};\nCOMMIT;"
+            )
+
+        if version in {0, 1}:
+            migration = (ROOT / "migrations" / "002_control_plane.sql").read_text(
+                encoding="utf-8"
+            )
+            connection.executescript(
+                "BEGIN IMMEDIATE;\n"
+                "CREATE TABLE IF NOT EXISTS schema_migrations (\n"
+                "  version INTEGER PRIMARY KEY,\n"
+                "  name TEXT NOT NULL,\n"
+                "  applied_at TEXT DEFAULT (datetime('now'))\n"
+                ");\n"
+                "INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (1, 'initial');\n"
+                + migration
+                + "\nINSERT OR IGNORE INTO schema_migrations(version, name) "
+                "VALUES (2, 'control_plane');\nPRAGMA user_version = 2;\nCOMMIT;"
+            )
+            version = 2
+        if version == 2:
+            apply_migration(3, "003_bug_bounty.sql", "bug_bounty_state")
+            version = 3
+        if version == 3:
+            apply_migration(4, "004_bug_bounty_assistant.sql", "bug_bounty_assistant")
+            version = 4
+        if version == 4:
+            apply_migration(5, "005_policy_bound_test_plans.sql", "policy_bound_test_plans")
+            version = 5
+        if version == 5:
+            apply_migration(6, "006_burp_provenance_dedupe.sql", "burp_provenance_dedupe")
+            version = 6
+        if version == 6 and not required_tables <= table_names(connection):
+            apply_schema(connection)
+            connection.commit()
         return SCHEMA_VERSION, backup_path
     except Exception:
         connection.rollback()
@@ -475,6 +522,12 @@ class Doctor:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
             tables = table_names(connection)
             columns = table_columns(connection, "scans") if "scans" in tables else set()
+            plan_columns = table_columns(connection, "test_plans") if "test_plans" in tables else set()
+            burp_ref_columns = (
+                table_columns(connection, "burp_message_refs")
+                if "burp_message_refs" in tables
+                else set()
+            )
             connection.close()
         except sqlite3.Error as exc:
             self.fail(f"database check failed: {exc}")
@@ -486,13 +539,29 @@ class Doctor:
             self.fail(
                 f"database schema version is {version}; run ./redcode db migrate"
             )
-        required_tables = {"engagements", "assets", "approvals", "evidence"}
+        required_tables = {
+            "engagements", "assets", "approvals", "evidence",
+            "bug_bounty_programs", "identities", "endpoints",
+            "application_workflows", "hypotheses", "hunt_sessions",
+            "bug_bounty_submissions", "policy_snapshots",
+            "program_scope_rules", "program_restrictions", "burp_import_runs",
+            "burp_message_refs", "test_plans", "approval_executions",
+            "hypothesis_events",
+        }
         missing_tables = sorted(required_tables - tables)
         if missing_tables:
             self.fail(f"missing database tables: {', '.join(missing_tables)}")
         missing_columns = sorted({"phase", "subdomain"} - columns)
         if missing_columns:
             self.fail(f"scans table missing columns: {', '.join(missing_columns)}")
+        missing_plan_columns = sorted({"policy_snapshot_id"} - plan_columns)
+        if missing_plan_columns:
+            self.fail(f"test_plans table missing columns: {', '.join(missing_plan_columns)}")
+        missing_burp_columns = sorted({"source_message_ref", "request_fingerprint"} - burp_ref_columns)
+        if missing_burp_columns:
+            self.fail(
+                "burp_message_refs table missing columns: " + ", ".join(missing_burp_columns)
+            )
         if os.name != "nt" and path.stat().st_mode & 0o077:
             self.warn(f"database is readable by other users: {path}")
 
@@ -583,6 +652,29 @@ class Doctor:
         else:
             self.ok("OpenCode MCP list completed without disconnected servers")
 
+    def check_burp(self, url: str | None) -> None:
+        if not url:
+            self.fail("BURP_MCP_URL is not configured")
+            return
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            self.fail(f"invalid BURP_MCP_URL: {url}")
+            return
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        try:
+            with socket.create_connection((parsed.hostname, port), timeout=5):
+                pass
+        except OSError as exc:
+            self.fail(f"Burp MCP is unreachable at {parsed.hostname}:{port}: {exc}")
+            return
+        self.ok(f"Burp MCP TCP endpoint reachable: {parsed.hostname}:{port}")
+        try:
+            address = ipaddress.ip_address(parsed.hostname)
+        except ValueError:
+            address = None
+        if parsed.scheme == "http" and address is not None and not address.is_private:
+            self.warn("Burp MCP uses plaintext HTTP on a non-private address")
+
     def summary(self) -> int:
         print()
         print(f"Doctor summary: {self.errors} error(s), {self.warnings} warning(s)")
@@ -604,6 +696,7 @@ def command_doctor(args: argparse.Namespace) -> int:
         doctor.check_hexstrike(
             os.environ.get("HEXSTRIKE_URL", "http://127.0.0.1:8888")
         )
+        doctor.check_burp(os.environ.get("BURP_MCP_URL"))
     if not args.skip_mcp:
         doctor.check_mcp()
     return doctor.summary()

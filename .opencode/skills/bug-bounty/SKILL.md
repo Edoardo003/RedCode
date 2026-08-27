@@ -15,4 +15,6 @@ Use this skill when the engagement is governed by a public or private program po
 6. Create one platform submission per root cause unless the program requests grouping.
 7. Use the tracked HackerOne or Bugcrowd template and leave final submission to the analyst.
 
+Load `mappa-bugbounty` for application mapping. Persist program metadata, symbolic identities, endpoints, workflows, hypotheses, hunt sessions, and submission outcomes in the dedicated SQLite tables so later sessions resume from evidence rather than chat.
+
 The program policy overrides generic methodology and aggressive mode.

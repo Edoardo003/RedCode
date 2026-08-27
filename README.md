@@ -8,7 +8,7 @@ It is not an autonomous penetration-testing system. The analyst approves active 
 
 ## What It Adds
 
-- A primary `redcode` orchestrator with recon, OSINT, scanning, validation, CTF, reporting, template, and simulation subagents.
+- A primary `redcode` orchestrator with recon, OSINT, scanning, validation, persistent bug-bounty hunting, CTF, reporting, template, and simulation subagents.
 - A local control plane for engagement manifests, deterministic scope checks, database migrations, and runtime diagnostics.
 - An optional Arsenal profile with separate read-only and proposal-only protocols, a
   workspace-bound MCP bridge, and analyst-gated execution.
@@ -36,7 +36,7 @@ Analyst
             -> HexStrike HTTP backend
             -> Arsenal Agent APIs (read-only context + proposal-only actions)
             -> filesystem / Fetch / Playwright / SQLite
-            -> Burp (optional, disabled)
+            -> Burp MCP (enabled, remote trusted VLAN)
   -> redcode launcher
        -> engagement manifest / scope preflight / doctor / migrations
 ```
@@ -98,6 +98,31 @@ RedCode auto-discovers it without copying the secret into session state.
 sudo ./install-tools.sh core web
 ```
 
+### Proxychains
+
+Every process launched through `./redcode` receives the configured
+`REDCODE_COMMAND_PREFIX`, which defaults to `proxychains4 -q`; the local
+HexStrike service also uses the same prefix for its child commands. Install it
+through the `core` profile (or install `proxychains4` separately) and set up
+its system configuration before starting RedCode. The launcher fails closed if
+the prefix executable is unavailable. The prefix is configurable through
+`REDCODE_COMMAND_PREFIX` in `.env`.
+
+`setup.sh` adds direct `localnet` exclusions for IPv4/IPv6 loopback and for the
+exact numeric host and port in `BURP_MCP_URL`. This keeps local HexStrike and
+the trusted Burp MCP hop reachable without bypassing Proxychains for unrelated
+targets. It creates a one-time `.redcode-backup` beside the system Proxychains
+configuration before changing it; without write access, setup prints the exact
+rules for the operator to review and add manually. Existing proxy-list entries
+and credentials are left unchanged.
+
+After changing this value, restart the local service with
+`sudo systemctl restart redcode-hexstrike`.
+
+If `HEXSTRIKE_URL` points to a LAN backend, run the same tracked runner on the
+host that runs HexStrike; a local RedCode launcher cannot prefix processes on a
+remote machine.
+
 ## Control Plane
 
 ```bash
@@ -133,6 +158,7 @@ Commands are OpenCode prompts, not deterministic APIs.
 | `/full-chain <target>` | Coordinate the applicable assessment phases. |
 | `/full-chain <target> --aggressive` | Execute one approved plan without routine phase prompts. |
 | `/resume <target>` | Resume from reliable saved state. |
+| `/bugbounty <target>` | Start or resume a HackerOne MAPPA hunt from Burp and SQLite. |
 | `/ctf ...` | Start or resume a named challenge or local lab. |
 
 Normal mode requests approval before consequential active phases. Aggressive mode does not expand scope and stops on ambiguity, instability, destructive impact, or a material plan change.
@@ -145,6 +171,26 @@ CTF commands accept labeled free-form arguments:
 ```
 
 RedCode never submits a flag. It returns a candidate and its verification status.
+
+## Bug-Bounty Assistant
+
+`/bugbounty` is backed by a local, persistent control workflow for reviewed
+program policies, selected Burp exports, application mapping, MAPPA hypotheses,
+one-time test-plan approvals, evidence hashes, and draft reports. It is built
+to guide an analyst through the next useful action, not to autonomously test or
+submit against a program.
+
+Use `./redcode bugbounty --help` for the local workflow and read
+[`docs/bugbounty-assistant.md`](docs/bugbounty-assistant.md) before first use.
+Implementation progress and verified limits are tracked in
+[`docs/implementation-status.md`](docs/implementation-status.md).
+The policy scope and the engagement manifest are intersected; the stricter rule
+wins. Burp traffic is imported from selected JSON/JSONL exports after local
+redaction rather than copying an entire proxy history into the workspace.
+
+The dedicated `bugbounty` agent has no direct HexStrike, Fetch, Playwright, or
+Burp MCP permissions. It prepares and audits bounded plans; any approved Burp
+request remains a manual analyst action.
 
 ## Data Layout
 
@@ -166,12 +212,14 @@ output/
 
 JSON is the complete phase handoff. SQLite is a normalized secondary index; persistence is agent-driven and should be checked by the analyst. Generated output, databases, manifests, wordlists, downloaded HexStrike code, and custom Nuclei templates are excluded from Git.
 
+Bug-bounty hunts additionally persist program metadata, symbolic identities, normalized endpoints with Burp references, application workflows, ranked hypotheses, hunt sessions, and HackerOne outcomes. Live cookies and bearer tokens do not belong in these mapping tables.
+
 ## Project Status
 
 Implemented and tested in the repository:
 
 - engagement validation, activation, and exact/wildcard/CIDR/URL scope decisions;
-- schema initialization and version 1 to version 2 migration with backup;
+- schema initialization and version 1–5 to version 6 migration with backup;
 - runtime and MCP diagnostics;
 - agent/configuration/link contract checks;
 - shell syntax checks through CI;
@@ -183,7 +231,7 @@ Current limitations:
 
 - Agent workflows and evidence persistence are prompt-driven, not transactional.
 - HexStrike is cloned without a pinned compatibility version; Node MCP entry points are pinned in the repository.
-- Burp MCP is disabled until a specific implementation is selected and tested.
+- Burp MCP is enabled and configured through `BURP_MCP_URL`; the external server address and VLAN path must be reachable, and the selected Burp-side implementation must expose the tools expected by the agent.
 - Tool profiles are limited to packages available from the host's configured APT repositories; additional HexStrike capabilities require separate, reviewed installation.
 - The confirmed development environment is Ubuntu 24.04.4 LTS x86_64 with OpenCode 1.3.17 and HexStrike 6.0.0; this is not a support matrix.
 - The Arsenal integration can create inert block proposals and run requests. It cannot

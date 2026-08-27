@@ -40,12 +40,13 @@ The names below must remain aligned with both `opencode.jsonc` and `.opencode/ag
 | `reporter` | Evidence-based reports using tracked templates. |
 | `templates` | Nuclei templates derived from confirmed findings. |
 | `socialeng` | In-scope social-engineering artifact generation; never deployment. |
+| `bugbounty` | Persistent HackerOne MAPPA mapping, hypothesis, and submission workflow. |
 
 `compaction` is configured in `opencode.jsonc` as a model assignment for long-context summarization. It has no standalone prompt file and is not a user-facing workflow agent.
 
 ## Commands
 
-Tracked commands are `/target`, `/osint`, `/scan`, `/exploit`, `/report`, `/full-chain`, `/resume`, and `/ctf`. Treat these files as prompts interpreted by OpenCode, not as deterministic programmatic APIs.
+Tracked commands are `/target`, `/osint`, `/scan`, `/exploit`, `/report`, `/full-chain`, `/resume`, `/bugbounty`, and `/ctf`. Treat these files as prompts interpreted by OpenCode, not as deterministic programmatic APIs.
 
 The default assessment sequence is:
 
@@ -163,8 +164,18 @@ Required practices:
 - `approvals`: explicit action and scope approvals.
 - `evidence`: evidence paths, hashes, MIME types, and sizes.
 - `finding_relations`: attack-chain and deduplication relationships.
+- `bug_bounty_programs`: HackerOne policy, bounty, account, and opportunity metadata.
+- `identities`: non-secret symbolic role and tenant identities.
+- `endpoints`: normalized application surface with Burp provenance.
+- `application_workflows`: actors, objects, and lifecycle state models.
+- `hypotheses`: persistent MAPPA queue and score components.
+- `hunt_sessions`: cross-session hunt progress and counts.
+- `bug_bounty_submissions`: HackerOne triage and reward outcomes.
+- `policy_snapshots`, `program_scope_rules`, and `program_restrictions`: reviewed policy evidence and structured program constraints.
+- `burp_import_runs` and `burp_message_refs`: redacted selected Burp imports with provenance.
+- `test_plans`, `approval_executions`, and `hypothesis_events`: immutable active-test plans, bounded outcomes, and audit history.
 
-Initialize or upgrade the configured database with `./redcode db migrate`. Version 1 databases are backed up before migration. The current schema version is 2.
+Initialize or upgrade the configured database with `./redcode db migrate`. Version 1–5 databases are backed up before migration. The current schema version is 6.
 
 The `scans.phase` and `scans.subdomain` fields support existing resume prompts. File-based `progress.json` creation and cleanup remain prompt-driven rather than transactionally enforced by the launcher, so resume is still experimental and must be verified.
 
@@ -200,9 +211,13 @@ output/ctf/{event}/{challenge}/
 - **Playwright:** headless browser automation for analyst-reviewed web verification.
 - **Fetch:** HTTP retrieval within declared scope.
 - **SQLite:** persistence using the path in `REDCODE_DB`.
-- **Burp:** optional remote MCP, disabled by default. Use for proxy history, request analysis, and analyst-reviewed Repeater workflows; do not claim autonomous exploitation reliability.
+- **Burp:** enabled remote MCP at `BURP_MCP_URL`. Use for scoped proxy history, request analysis, and analyst-reviewed Repeater workflows; do not claim autonomous exploitation reliability. The doctor checks TCP reachability, while VLAN routing and the Burp-side MCP service remain external dependencies.
 
-`PROXY_URL` causes the launcher to export standard HTTP proxy variables. Verify support per tool; this does not proxy raw network traffic automatically.
+The launcher prefixes every process it starts with `REDCODE_COMMAND_PREFIX`
+(default `proxychains4 -q`) and `PROXY_URL` additionally exports standard HTTP
+proxy variables. This does not prove that remote services, a manually operated
+Burp instance, or every network path inside external tooling is physically
+intercepted; verify routing for each such path.
 
 In the Arsenal profile, the runtime override disables HexStrike, Fetch, Playwright,
 Burp, Bash, and built-in web access for every configured agent. Do not weaken those
