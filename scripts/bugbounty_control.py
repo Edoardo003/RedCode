@@ -12,10 +12,12 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
 import re
+import secrets
 import sqlite3
 import sys
 from typing import Any, Iterable
@@ -59,7 +61,18 @@ UUID_SEGMENT = re.compile(
 )
 NUMERIC_SEGMENT = re.compile(r"^\d+$")
 OPAQUE_SEGMENT = re.compile(r"^[A-Za-z0-9_-]{20,}$")
+SHORT_IDENTIFIER_SEGMENT = re.compile(r"^[A-Za-z0-9_-]{6,}$")
 SAFE_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+FIELD_CAMEL_BOUNDARY = re.compile(r"([a-z0-9])([A-Z])")
+FIELD_SEPARATOR = re.compile(r"[^A-Za-z0-9]+")
+IDENTIFIER_FIELD_SUFFIX = re.compile(r"(?:^|_)(?:id|identifier)$")
+PII_FIELD_NAMES = {
+    "address", "email", "first_name", "ip", "last_name", "name", "phone", "username",
+}
+IDENTIFIER_HMAC_KEY_BYTES = 32
+MAX_IDENTIFIER_CONTEXTS = 80
+MAX_IDENTIFIER_MESSAGE_REFS = 40
+MAX_IDENTIFIER_FACTS_PER_MESSAGE = 500
 
 
 class BugBountyError(RuntimeError):
@@ -88,6 +101,41 @@ def sha256_path(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def identifier_key_path() -> Path:
+    """Return the ignored local key used for identifier-only correlation."""
+    return ROOT / "output" / ".redcode" / "identifier-hmac.key"
+
+
+def identifier_hmac_key(connection: sqlite3.Connection, engagement_id: int) -> bytes:
+    """Load or create the local HMAC key without persisting raw identifiers."""
+    path = identifier_key_path()
+    try:
+        key = path.read_bytes()
+    except FileNotFoundError:
+        existing = connection.execute(
+            "SELECT COUNT(*) AS count FROM identifier_registry WHERE engagement_id = ?",
+            (engagement_id,),
+        ).fetchone()
+        count = int(existing["count"] if isinstance(existing, sqlite3.Row) else existing[0]) if existing else 0
+        if count > 0:
+            raise BugBountyError(
+                f"identifier fingerprint key is missing; restore {path} before importing more traffic"
+            )
+        key = secrets.token_bytes(IDENTIFIER_HMAC_KEY_BYTES)
+        write_private(path, key)
+    except OSError as error:
+        raise BugBountyError(f"cannot read identifier fingerprint key: {error}") from error
+    if len(key) != IDENTIFIER_HMAC_KEY_BYTES:
+        raise BugBountyError(f"identifier fingerprint key is invalid: {path}")
+    return key
+
+
+def identifier_fingerprint(key: bytes, engagement_id: int, value: Any) -> str:
+    """Create an engagement-scoped fingerprint; the original value is never stored."""
+    message = f"{engagement_id}:".encode("utf-8") + str(value).encode("utf-8")
+    return "hmac-sha256:" + hmac.new(key, message, hashlib.sha256).hexdigest()
 
 
 def require_label(value: str, field: str = "label") -> str:
@@ -441,7 +489,7 @@ def normalize_path(path: str) -> tuple[str, bool]:
     normalized: list[str] = []
     has_object_id = False
     for segment in segments:
-        if NUMERIC_SEGMENT.fullmatch(segment) or UUID_SEGMENT.fullmatch(segment) or OPAQUE_SEGMENT.fullmatch(segment):
+        if is_identifier_segment(segment):
             normalized.append("{id}")
             has_object_id = True
         else:
@@ -450,11 +498,183 @@ def normalize_path(path: str) -> tuple[str, bool]:
     return result if result.startswith("/") else f"/{result}", has_object_id
 
 
+def is_identifier_segment(segment: str) -> bool:
+    """Classify structure only; this deliberately does not assign an entity role."""
+    if NUMERIC_SEGMENT.fullmatch(segment) or UUID_SEGMENT.fullmatch(segment) or OPAQUE_SEGMENT.fullmatch(segment):
+        return True
+    if not SHORT_IDENTIFIER_SEGMENT.fullmatch(segment):
+        return False
+    return bool(re.search(r"[A-Za-z]", segment) and re.search(r"\d", segment))
+
+
+def path_identifier_segments(path: str) -> list[tuple[int, str]]:
+    """Return 1-based non-empty path positions and their raw candidate values."""
+    return [
+        (position, segment)
+        for position, segment in enumerate((part for part in path.split("/") if part), start=1)
+        if is_identifier_segment(segment)
+    ]
+
+
+def normalize_field_label(value: Any) -> str:
+    text = FIELD_CAMEL_BOUNDARY.sub(r"\1_\2", str(value)).strip()
+    text = FIELD_SEPARATOR.sub("_", text).strip("_").lower()
+    return text[:128]
+
+
+def is_safe_identifier_field(label: str) -> bool:
+    normalized = normalize_field_label(label)
+    if not normalized or normalized in PII_FIELD_NAMES:
+        return False
+    if normalized in SENSITIVE_NAMES or any(token in normalized for token in SENSITIVE_NAMES):
+        return False
+    return bool(IDENTIFIER_FIELD_SUFFIX.search(normalized))
+
+
+def scalar_identifier(value: Any) -> str | None:
+    if value is None or isinstance(value, bool) or isinstance(value, (dict, list)):
+        return None
+    text = str(value)
+    if not text or len(text) > 512:
+        return None
+    return text
+
+
 def message_value(message: dict[str, Any], name: str, default: Any = None) -> Any:
     request = message.get("request")
     if isinstance(request, dict) and name in request:
         return request[name]
     return message.get(name, default)
+
+
+def message_part_value(
+    message: dict[str, Any], part: str, name: str, default: Any = None
+) -> Any:
+    value = message.get(part)
+    if isinstance(value, dict) and name in value:
+        return value[name]
+    if part == "request":
+        return message_value(message, name, default)
+    aliases = {
+        "response": ("response", "response_data"),
+        "request": ("request",),
+    }
+    for alias in aliases.get(part, (part,)):
+        candidate = message.get(alias)
+        if isinstance(candidate, dict) and name in candidate:
+            return candidate[name]
+    return message.get(f"{part}_{name}", default)
+
+
+def structured_body(value: Any) -> tuple[Any, str | None]:
+    """Decode JSON/form data for in-memory observation only."""
+    if isinstance(value, (dict, list)):
+        return value, "json"
+    if value is None or value == "":
+        return None, None
+    text = str(value)
+    try:
+        return json.loads(text), "json"
+    except (TypeError, json.JSONDecodeError):
+        pairs = parse_qsl(text, keep_blank_values=True)
+        if pairs and "=" in text:
+            return {key: item for key, item in pairs}, "form"
+    return None, None
+
+
+def iter_structured_values(value: Any, path: tuple[str, ...] = ()) -> Iterable[tuple[str, tuple[str, ...], Any]]:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = path + (str(key),)
+            if isinstance(child, (dict, list)):
+                yield from iter_structured_values(child, child_path)
+            else:
+                yield str(key), child_path, child
+    elif isinstance(value, list):
+        for index, child in enumerate(value[:100]):
+            child_path = path + (str(index),)
+            if isinstance(child, (dict, list)):
+                yield from iter_structured_values(child, child_path)
+            elif path:
+                yield path[-1], child_path, child
+
+
+def identifier_observation_facts(
+    message: dict[str, Any],
+    raw_url: str,
+    *,
+    engagement_id: int,
+    endpoint_id: int,
+    source_reference: str,
+    hmac_key: bytes,
+) -> list[dict[str, Any]]:
+    """Extract safe identifier facts while raw values are still in memory."""
+    facts: list[dict[str, Any]] = []
+
+    def add_fact(
+        value: Any,
+        *,
+        context: str,
+        field_label: str | None = None,
+        field_path: str | None = None,
+        position: int | None = None,
+        require_identifier_shape: bool = False,
+    ) -> None:
+        if len(facts) >= MAX_IDENTIFIER_FACTS_PER_MESSAGE:
+            return
+        raw = scalar_identifier(value)
+        if raw is None or (require_identifier_shape and not is_identifier_segment(raw)):
+            return
+        if field_label is not None and not is_safe_identifier_field(field_label):
+            return
+        facts.append(
+            {
+                "fingerprint": identifier_fingerprint(hmac_key, engagement_id, raw),
+                "context": context,
+                "endpoint_id": endpoint_id,
+                "position": position,
+                "field_label": normalize_field_label(field_label) if field_label else None,
+                "observed_label": str(field_label)[:128] if field_label else None,
+                "field_path": (field_path or "")[:256] or None,
+                "message_ref": source_reference,
+            }
+        )
+
+    parsed = urlparse(raw_url)
+    for position, raw in path_identifier_segments(parsed.path or "/"):
+        add_fact(raw, context="path", position=position, require_identifier_shape=True)
+    for label, value in parse_qsl(parsed.query, keep_blank_values=True):
+        add_fact(
+            value,
+            context="query",
+            field_label=label,
+            field_path=label,
+            require_identifier_shape=not is_safe_identifier_field(label),
+        )
+
+    for part in ("request", "response"):
+        body = message_part_value(message, part, "body")
+        if body is None:
+            candidate = message.get(part)
+            if part == "response":
+                candidate = candidate or message.get("response_data") or message.get("response_body")
+            if isinstance(candidate, (dict, list)) and (
+                isinstance(candidate, list)
+                or not any(key in candidate for key in ("body", "headers", "status", "status_code", "method"))
+            ):
+                body = candidate
+        decoded, format_name = structured_body(body)
+        if decoded is None or format_name is None:
+            continue
+        context = f"{part}_{format_name}"
+        for label, field_path, value in iter_structured_values(decoded):
+            add_fact(
+                value,
+                context=context,
+                field_label=label,
+                field_path=".".join(field_path),
+            )
+    return facts
 
 
 def message_url(message: dict[str, Any]) -> str:
@@ -519,11 +739,302 @@ def merged_endpoint_metadata(
         prior_parameters = []
     if not isinstance(prior_identities, list):
         prior_identities = []
-    return {
-        "query_parameters": sorted({str(item) for item in prior_parameters} | set(query_parameters)),
-        "identity_labels": sorted({str(item) for item in prior_identities} | {identity_label}),
-        "has_object_identifier": bool(existing.get("has_object_identifier")) or has_object_id,
+    metadata = dict(existing)
+    metadata.update(
+        {
+            "query_parameters": sorted({str(item) for item in prior_parameters} | set(query_parameters)),
+            "identity_labels": sorted({str(item) for item in prior_identities} | {identity_label}),
+            "has_object_identifier": bool(existing.get("has_object_identifier")) or has_object_id,
+        }
+    )
+    return metadata
+
+
+def json_list(value: str | None) -> list[Any]:
+    try:
+        decoded = json.loads(value or "[]")
+    except json.JSONDecodeError:
+        return []
+    return decoded if isinstance(decoded, list) else []
+
+
+def context_key(fact: dict[str, Any]) -> str:
+    return canonical_json(
+        {
+            "context": fact.get("context"),
+            "endpoint_id": fact.get("endpoint_id"),
+            "position": fact.get("position"),
+            "field_label": fact.get("field_label"),
+            "field_path": fact.get("field_path"),
+        }
+    )
+
+
+def merge_identifier_facts(
+    connection: sqlite3.Connection,
+    engagement_id: int,
+    facts: Iterable[dict[str, Any]],
+) -> None:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for fact in facts:
+        grouped.setdefault(str(fact["fingerprint"]), []).append(fact)
+    for fingerprint, fingerprint_facts in grouped.items():
+        row = connection.execute(
+            "SELECT roles_json, contexts_json FROM identifier_registry "
+            "WHERE engagement_id = ? AND fingerprint = ?",
+            (engagement_id, fingerprint),
+        ).fetchone()
+        roles = [item for item in json_list(row["roles_json"] if row else None) if isinstance(item, dict)]
+        contexts = [item for item in json_list(row["contexts_json"] if row else None) if isinstance(item, dict)]
+        for fact in fingerprint_facts:
+            key = context_key(fact)
+            existing = next((item for item in contexts if item.get("key") == key), None)
+            if existing is None:
+                existing = {
+                    "key": key,
+                    "context": fact.get("context"),
+                    "endpoint_id": fact.get("endpoint_id"),
+                    "position": fact.get("position"),
+                    "field_label": fact.get("field_label"),
+                    "observed_label": fact.get("observed_label"),
+                    "field_path": fact.get("field_path"),
+                    "occurrences": 0,
+                    "message_refs": [],
+                }
+                contexts.append(existing)
+            existing["occurrences"] = min(10000, int(existing.get("occurrences", 0)) + 1)
+            refs = existing.setdefault("message_refs", [])
+            if fact.get("message_ref") and fact["message_ref"] not in refs:
+                refs.append(fact["message_ref"])
+                del refs[:-MAX_IDENTIFIER_MESSAGE_REFS]
+        if len(contexts) > MAX_IDENTIFIER_CONTEXTS:
+            contexts.sort(key=lambda item: (str(item.get("context")), str(item.get("field_path"))))
+            contexts = contexts[:MAX_IDENTIFIER_CONTEXTS]
+        connection.execute(
+            "INSERT INTO identifier_registry (engagement_id, fingerprint, roles_json, contexts_json) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(engagement_id, fingerprint) DO UPDATE SET "
+            "roles_json=excluded.roles_json, contexts_json=excluded.contexts_json, updated_at=datetime('now')",
+            (engagement_id, fingerprint, canonical_json(roles), canonical_json(contexts)),
+        )
+
+
+def role_evidence(contexts: list[dict[str, Any]], role: str) -> dict[str, Any]:
+    field_contexts = [item for item in contexts if item.get("field_label") == role]
+    path_contexts = [item for item in contexts if item.get("context") == "path"]
+    field_occurrences = sum(int(item.get("occurrences", 0)) for item in field_contexts)
+    path_occurrences = sum(int(item.get("occurrences", 0)) for item in path_contexts)
+    messages = {
+        ref
+        for item in field_contexts + path_contexts
+        for ref in item.get("message_refs", [])
+        if isinstance(ref, str)
     }
+    if field_occurrences >= 3 and path_occurrences >= 2 and len(messages) >= 3:
+        confidence, status = "high", "inferred"
+    elif field_occurrences >= 2 and path_occurrences >= 1 and len(messages) >= 2:
+        confidence, status = "medium", "inferred"
+    elif field_occurrences and path_occurrences:
+        confidence, status = "low", "proposed"
+    else:
+        confidence, status = "low", "observed"
+    aliases = sorted({str(item.get("observed_label")) for item in field_contexts if item.get("observed_label")})
+    return {
+        "role": role,
+        "status": status,
+        "confidence": confidence,
+        "field_observations": field_occurrences,
+        "path_observations": path_occurrences,
+        "message_count": len(messages),
+        "aliases": aliases,
+    }
+
+
+def endpoint_metadata(endpoint: sqlite3.Row) -> dict[str, Any]:
+    try:
+        decoded = json.loads(endpoint["metadata_json"] or "{}")
+    except json.JSONDecodeError:
+        decoded = {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def semantic_display_template(generic_template: str, parameters: list[dict[str, Any]]) -> str:
+    segments = [part for part in generic_template.split("/") if part]
+    selected = {
+        int(item["position"]): str(item["selected_role"])
+        for item in parameters
+        if item.get("selected_role") and isinstance(item.get("position"), int)
+    }
+    rendered = [selected.get(position, segment) for position, segment in enumerate(segments, start=1)]
+    return "/" + "/".join(rendered) if rendered else "/"
+
+
+def refresh_identifier_semantics(
+    connection: sqlite3.Connection,
+    engagement_id: int,
+    endpoint_ids: Iterable[int],
+) -> None:
+    registry_rows = connection.execute(
+        "SELECT fingerprint, roles_json, contexts_json FROM identifier_registry "
+        "WHERE engagement_id = ?",
+        (engagement_id,),
+    ).fetchall()
+    path_bindings: dict[tuple[int, int], list[dict[str, Any]]] = {}
+    global_role_contexts: dict[str, list[dict[str, Any]]] = {}
+    for registry in registry_rows:
+        contexts = [item for item in json_list(registry["contexts_json"]) if isinstance(item, dict)]
+        for context in contexts:
+            role = context.get("field_label")
+            if not role:
+                continue
+            global_role_contexts.setdefault(str(role), []).append(context)
+            global_role_contexts[str(role)].extend(
+                item for item in contexts if item.get("context") == "path"
+            )
+    for registry in registry_rows:
+        contexts = [item for item in json_list(registry["contexts_json"]) if isinstance(item, dict)]
+        roles = [item for item in json_list(registry["roles_json"]) if isinstance(item, dict)]
+        role_names = sorted({str(item.get("field_label")) for item in contexts if item.get("field_label")})
+        role_objects = {str(item.get("role")): item for item in roles if item.get("role")}
+        for role in role_names:
+            evidence = role_evidence(global_role_contexts.get(role, contexts), role)
+            prior = role_objects.get(role, {})
+            if prior.get("status") in {"confirmed", "contradicted"}:
+                evidence["status"] = prior["status"]
+            for key in ("reviewed_by", "reviewed_at", "review_note"):
+                if prior.get(key) is not None:
+                    evidence[key] = prior[key]
+            role_objects[role] = evidence
+        connection.execute(
+            "UPDATE identifier_registry SET roles_json = ?, updated_at=datetime('now') "
+            "WHERE engagement_id = ? AND fingerprint = ?",
+            (canonical_json(sorted(role_objects.values(), key=lambda item: str(item.get("role")))), engagement_id, registry["fingerprint"]),
+        )
+        for context in contexts:
+            if context.get("context") != "path" or context.get("endpoint_id") is None or context.get("position") is None:
+                continue
+            for role, evidence in role_objects.items():
+                if any(item.get("field_label") == role for item in contexts):
+                    path_bindings.setdefault((int(context["endpoint_id"]), int(context["position"])), []).append(
+                        {
+                            "role": role,
+                            "fingerprint": registry["fingerprint"],
+                            "status": evidence.get("status", "observed"),
+                            "confidence": evidence.get("confidence", "low"),
+                            "field_observations": evidence.get("field_observations", 0),
+                            "path_observations": evidence.get("path_observations", 0),
+                        }
+                    )
+    ids = sorted(set(int(value) for value in endpoint_ids))
+    if not ids:
+        return
+    placeholders = ",".join("?" for _ in ids)
+    endpoints = connection.execute(
+        f"SELECT id, host, path_template, metadata_json FROM endpoints WHERE engagement_id = ? AND id IN ({placeholders})",
+        [engagement_id, *ids],
+    ).fetchall()
+    workflow_rows = connection.execute(
+        "SELECT id, workflow_key, semantics_json FROM application_workflows WHERE engagement_id = ?",
+        (engagement_id,),
+    ).fetchall()
+    workflows_by_key = {str(row["workflow_key"]): row for row in workflow_rows}
+    lead_updates: dict[int, list[dict[str, Any]]] = {}
+    for endpoint in endpoints:
+        metadata = endpoint_metadata(endpoint)
+        old_semantic = metadata.get("semantic_path") if isinstance(metadata.get("semantic_path"), dict) else {}
+        parameters: list[dict[str, Any]] = []
+        path_parts = [part for part in endpoint["path_template"].split("/") if part]
+        positions = [position for position, part in enumerate(path_parts, start=1) if part == "{id}"]
+        for position in positions:
+            candidates_by_role: dict[str, dict[str, Any]] = {}
+            for candidate in path_bindings.get((int(endpoint["id"]), position), []):
+                current = candidates_by_role.get(candidate["role"])
+                if current is None or (candidate["field_observations"], candidate["path_observations"]) > (
+                    current["field_observations"], current["path_observations"]
+                ):
+                    candidates_by_role[candidate["role"]] = candidate
+            prior_parameter = next(
+                (item for item in old_semantic.get("parameters", []) if item.get("position") == position),
+                {},
+            ) if isinstance(old_semantic.get("parameters"), list) else {}
+            prior_candidates = {
+                str(item.get("role")): item
+                for item in prior_parameter.get("candidates", [])
+                if isinstance(item, dict) and item.get("role")
+            }
+            for role, candidate in prior_candidates.items():
+                if role not in candidates_by_role and candidate.get("status") in {"confirmed", "contradicted"}:
+                    candidates_by_role[role] = candidate
+                elif role in candidates_by_role and candidate.get("status") in {"confirmed", "contradicted"}:
+                    candidates_by_role[role].update(
+                        {key: value for key, value in candidate.items() if key in {"status", "reviewed_by", "reviewed_at", "review_note"}}
+                    )
+            parameter = {
+                "position": position,
+                "status": "unknown" if not candidates_by_role else "proposed",
+                "candidates": sorted(candidates_by_role.values(), key=lambda item: str(item.get("role"))),
+            }
+            selected = prior_parameter.get("selected_role")
+            if selected:
+                parameter["selected_role"] = selected
+                parameter["status"] = "confirmed"
+            parameters.append(parameter)
+        semantic_path = {
+            "generic_template": endpoint["path_template"],
+            "parameters": parameters,
+            "display_template": semantic_display_template(endpoint["path_template"], parameters),
+        }
+        metadata["semantic_path"] = semantic_path
+        connection.execute(
+            "UPDATE endpoints SET metadata_json = ?, last_seen_at=last_seen_at WHERE id = ?",
+            (canonical_json(metadata), endpoint["id"]),
+        )
+        named_parameters = [
+            item for item in parameters
+            if item.get("candidates") and any(
+                candidate.get("role")
+                and candidate.get("status") not in {"contradicted", "unknown"}
+                for candidate in item["candidates"]
+            )
+        ]
+        roles = sorted({
+            str(candidate["role"])
+            for item in named_parameters
+            for candidate in item.get("candidates", [])
+            if candidate.get("role") and candidate.get("status") != "contradicted"
+        })
+        if len(named_parameters) >= 2 and len(roles) >= 2:
+            workflow = workflows_by_key.get(f"{endpoint['host']}:{root_segment(endpoint['path_template'])}")
+            if workflow is not None:
+                lead = {
+                    "id": semantic_key(
+                        "identifier-lead",
+                        {"endpoint_id": int(endpoint["id"]), "roles": roles},
+                    ),
+                    "endpoint_id": int(endpoint["id"]),
+                    "roles": roles,
+                    "relation": "candidate-scope",
+                    "status": "proposed",
+                    "evidence": "Named identifier candidates co-occur on one observed endpoint.",
+                }
+                lead_updates.setdefault(int(workflow["id"]), []).append(lead)
+    for workflow_id, leads in lead_updates.items():
+        row = next(item for item in workflow_rows if int(item["id"]) == workflow_id)
+        semantics = workflow_semantics(row["semantics_json"])
+        prior = {
+            str(item.get("id")): item
+            for item in semantics.get("identifier_leads", [])
+            if isinstance(item, dict) and item.get("id")
+        }
+        for lead in leads:
+            old = prior.get(lead["id"])
+            if old and old.get("status") in {"confirmed", "rejected"}:
+                lead = {**lead, **old}
+            prior[lead["id"]] = lead
+        semantics["identifier_leads"] = sorted(prior.values(), key=lambda item: str(item.get("id")))
+        connection.execute(
+            "UPDATE application_workflows SET semantics_json = ?, updated_at=datetime('now') WHERE id = ?",
+            (canonical_json(semantics), workflow_id),
+        )
 
 
 def upsert_endpoint(
@@ -805,6 +1316,8 @@ def command_ingest(args: argparse.Namespace) -> int:
         import_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
         artifact_path = output_directory(manifest) / f"burp-import-{import_id}.redacted.json"
         artifacts: list[dict[str, Any]] = []
+        hmac_key = identifier_hmac_key(connection, engagement_id)
+        identifier_endpoint_ids: set[int] = set()
         imported = skipped = redactions = 0
         for index, message in enumerate(messages, start=1):
             try:
@@ -853,6 +1366,14 @@ def command_ingest(args: argparse.Namespace) -> int:
                 headers, header_redactions = redact_headers(message_value(message, "headers", {}))
                 body, body_redactions = redact_body(message_value(message, "body"))
                 redactions += url_redactions + header_redactions + body_redactions
+                identifier_facts = identifier_observation_facts(
+                    message,
+                    raw_url,
+                    engagement_id=engagement_id,
+                    endpoint_id=endpoint_id,
+                    source_reference=reference,
+                    hmac_key=hmac_key,
+                )
                 try:
                     connection.execute(
                         "INSERT INTO burp_message_refs "
@@ -873,8 +1394,16 @@ def command_ingest(args: argparse.Namespace) -> int:
                         ),
                     )
                 except sqlite3.IntegrityError:
+                    # Endpoint-level request deduplication must not discard
+                    # safe semantic observations from a later export.
+                    merge_identifier_facts(connection, engagement_id, identifier_facts)
+                    if identifier_facts:
+                        identifier_endpoint_ids.add(endpoint_id)
                     skipped += 1
                     continue
+                merge_identifier_facts(connection, engagement_id, identifier_facts)
+                if identifier_facts:
+                    identifier_endpoint_ids.add(endpoint_id)
                 if args.include_bodies:
                     artifacts.append(
                         {
@@ -914,6 +1443,7 @@ def command_ingest(args: argparse.Namespace) -> int:
             "WHERE id = ?",
             (len(messages), imported, skipped, redactions, import_id),
         )
+        refresh_identifier_semantics(connection, engagement_id, identifier_endpoint_ids)
         connection.execute(
             "UPDATE hunt_sessions SET endpoints_seen = ("
             "SELECT COUNT(*) FROM endpoints WHERE engagement_id = ?) "
@@ -975,12 +1505,16 @@ def workflow_semantics(value: str | None) -> dict[str, Any]:
     transitions = decoded.get("transitions", [])
     invariants = decoded.get("invariants", [])
     observations = decoded.get("observations", [])
+    identifier_leads = decoded.get("identifier_leads", [])
+    relationships = decoded.get("relationships", [])
     return {
         "version": 1,
         "states": states if isinstance(states, dict) else {},
         "transitions": [item for item in transitions if isinstance(item, dict)],
         "invariants": [item for item in invariants if isinstance(item, dict)],
         "observations": [item for item in observations if isinstance(item, dict)],
+        "identifier_leads": [item for item in identifier_leads if isinstance(item, dict)],
+        "relationships": [item for item in relationships if isinstance(item, dict)],
     }
 
 
@@ -1147,6 +1681,11 @@ def command_map(args: argparse.Namespace) -> int:
                     3 if workflow["name"] in {"admin", "billing", "account", "users"} else 1,
                 ),
             )
+        refresh_identifier_semantics(
+            connection,
+            engagement_id,
+            [int(endpoint["id"]) for endpoint in endpoints],
+        )
         report_path = output_directory(manifest) / "application-map.md"
         lines = [
             "# Application map",
@@ -1432,6 +1971,52 @@ def semantic_hypothesis_seeds(
                 sensitivity=max(int(workflow.get("sensitivity", 0)), int(invariant_data.get("sensitivity", 0))),
                 terminal=False, identities=identities_by_endpoint.get(int(endpoint["id"]), []), duplicate_risk=duplicate_risk,
             )))
+    for relationship in semantics.get("relationships", []):
+        if relationship.get("status") != "confirmed":
+            continue
+        from_role = str(relationship.get("from_role", "identifier"))
+        to_role = str(relationship.get("to_role", "scope"))
+        relation = str(relationship.get("relation", "scoped-by"))
+        endpoint = endpoint_for_semantic_seed(endpoints, relationship.get("endpoint_id"))
+        if endpoint is None:
+            for candidate_endpoint in endpoints:
+                semantic_path = semantic_path_for_endpoint(candidate_endpoint)
+                roles = {
+                    str(candidate.get("role"))
+                    for parameter in semantic_path.get("parameters", [])
+                    if isinstance(parameter, dict)
+                    for candidate in parameter.get("candidates", [])
+                    if isinstance(candidate, dict)
+                    and candidate.get("role")
+                    and candidate.get("status") != "contradicted"
+                }
+                if {from_role, to_role} <= roles:
+                    endpoint = candidate_endpoint
+                    break
+        if endpoint is None:
+            continue
+        invariant = f"The {from_role} remains correctly scoped to the related {to_role}."
+        seeds.append((endpoint, semantic_seed(
+            workflow=workflow,
+            endpoint=endpoint,
+            kind="identifier-relationship",
+            source_id=str(relationship["id"]),
+            invariant=invariant,
+            assumption="The server binds related identifiers to the same authorized object and tenant context.",
+            violation=f"A request may combine a {from_role} with a different {to_role} and retain access.",
+            suggested_control=f"Replay {endpoint['method']} {endpoint['path_template']} with the observed identifier pair.",
+            suggested_change=f"Change only the {to_role} while keeping the {from_role} and authenticated identity constant.",
+            expected_result="The server rejects the mismatched identifier relationship.",
+            actor_label="authorized-user",
+            object_state="observed",
+            authorization_effect="none",
+            trust_boundaries=[relation],
+            confidence=3,
+            sensitivity=max(int(workflow.get("sensitivity", 0)), 3),
+            terminal=False,
+            identities=identities_by_endpoint.get(int(endpoint["id"]), []),
+            duplicate_risk=duplicate_risk,
+        )))
     return seeds
 
 
@@ -1584,7 +2169,7 @@ def command_queue(args: argparse.Namespace) -> int:
                         )
                     )
         rows = connection.execute(
-            "SELECT h.*, e.host, e.method, e.path_template FROM hypotheses h "
+            "SELECT h.*, e.host, e.method, e.path_template, e.metadata_json FROM hypotheses h "
             "LEFT JOIN endpoints e ON e.id = h.endpoint_id "
             "WHERE h.engagement_id = ? AND h.status IN ('queued', 'approved', 'testing', 'candidate') "
             "ORDER BY h.priority DESC, h.created_at ASC LIMIT ?",
@@ -1599,9 +2184,11 @@ def command_queue(args: argparse.Namespace) -> int:
         print("MAPPA queue")
         for row in rows:
             reasoning = json_object(row["reasoning_json"])
+            semantic_path = semantic_path_for_endpoint(row) if row["metadata_json"] else {}
+            display_path = semantic_path.get("display_template") or row["path_template"]
             print(
                 f"- {row['hypothesis_id']} [{row['status']}, priority {row['priority']}]: "
-                f"{row['method']} {row['host']}{row['path_template']}\n"
+                f"{row['method']} {row['host']}{display_path}\n"
                 f"  Why: boundary={row['boundary_score']}, impact={row['impact_score']}, "
                 f"novelty={row['novelty_score']}, evidence={row['evidence_score']}; "
                 f"duplicate risk={row['duplicate_risk']}, cost={row['test_cost']}, "
@@ -1851,6 +2438,244 @@ def command_workflow_learn(args: argparse.Namespace) -> int:
         )
         connection.commit()
         print("Workflow learning observation saved. Re-run queue --generate to refresh queued proposals.")
+        return 0
+    finally:
+        connection.close()
+
+
+def semantic_path_for_endpoint(endpoint: sqlite3.Row) -> dict[str, Any]:
+    metadata = endpoint_metadata(endpoint)
+    semantic_path = metadata.get("semantic_path")
+    return semantic_path if isinstance(semantic_path, dict) else {
+        "generic_template": endpoint["path_template"],
+        "parameters": [],
+        "display_template": endpoint["path_template"],
+    }
+
+
+def save_endpoint_semantic_path(
+    connection: sqlite3.Connection, endpoint: sqlite3.Row, semantic_path: dict[str, Any]
+) -> None:
+    metadata = endpoint_metadata(endpoint)
+    metadata["semantic_path"] = semantic_path
+    connection.execute(
+        "UPDATE endpoints SET metadata_json = ? WHERE id = ?",
+        (canonical_json(metadata), endpoint["id"]),
+    )
+
+
+def command_identifier_list(args: argparse.Namespace) -> int:
+    connection, _, _, engagement_id = connect(args)
+    try:
+        get_program(connection, engagement_id)
+        rows = connection.execute(
+            "SELECT id, host, method, path_template, metadata_json FROM endpoints "
+            "WHERE engagement_id = ? ORDER BY host, path_template, method",
+            (engagement_id,),
+        ).fetchall()
+        registry_count = int(connection.execute(
+            "SELECT COUNT(*) FROM identifier_registry WHERE engagement_id = ?",
+            (engagement_id,),
+        ).fetchone()[0])
+        print(f"Identifier registry: {registry_count} fingerprint(s), raw values are never stored.")
+        for endpoint in rows:
+            semantic_path = semantic_path_for_endpoint(endpoint)
+            parameters = semantic_path.get("parameters", [])
+            if not parameters:
+                continue
+            print(f"- endpoint {endpoint['id']}: {endpoint['method']} {endpoint['host']}{endpoint['path_template']}")
+            print(f"  display: {semantic_path.get('display_template', endpoint['path_template'])}")
+            for parameter in parameters:
+                candidates = ", ".join(
+                    f"{item.get('role')} ({item.get('status', 'unknown')}, {item.get('confidence', 'low')})"
+                    for item in parameter.get("candidates", [])
+                    if isinstance(item, dict)
+                ) or "unknown"
+                print(f"  position {parameter.get('position')}: {candidates}")
+        return 0
+    finally:
+        connection.close()
+
+
+def identifier_endpoint_update(
+    connection: sqlite3.Connection,
+    engagement_id: int,
+    endpoint_id: int,
+    position: int,
+    role: str,
+    *,
+    status: str,
+    reviewer: str,
+    note: str,
+) -> None:
+    endpoint = endpoint_row(connection, engagement_id, endpoint_id)
+    semantic_path = semantic_path_for_endpoint(endpoint)
+    parameters = semantic_path.setdefault("parameters", [])
+    parameter = next((item for item in parameters if item.get("position") == position), None)
+    if parameter is None:
+        raise BugBountyError("identifier position is not a normalized path parameter")
+    selected = parameter.get("selected_role")
+    if status == "confirmed" and selected and selected != role:
+        raise BugBountyError(
+            f"position {position} is already confirmed as {selected}; reject it explicitly before correcting it"
+        )
+    candidates = [item for item in parameter.get("candidates", []) if isinstance(item, dict)]
+    candidate = next((item for item in candidates if item.get("role") == role), None)
+    if candidate is None:
+        candidate = {"role": role, "confidence": "low", "field_observations": 0, "path_observations": 0}
+        candidates.append(candidate)
+    candidate.update({
+        "role": role,
+        "status": status,
+        "reviewed_by": reviewer,
+        "reviewed_at": utc_text(),
+        "review_note": note,
+    })
+    parameter["candidates"] = sorted(candidates, key=lambda item: str(item.get("role")))
+    if status == "confirmed":
+        parameter["selected_role"] = role
+        parameter["status"] = "confirmed"
+    elif parameter.get("selected_role") == role:
+        parameter.pop("selected_role", None)
+        parameter["status"] = "proposed" if candidates else "unknown"
+    semantic_path["display_template"] = semantic_display_template(
+        endpoint["path_template"], parameters
+    )
+    save_endpoint_semantic_path(connection, endpoint, semantic_path)
+
+
+def command_identifier_confirm(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        get_program(connection, engagement_id)
+        endpoint = endpoint_row(connection, engagement_id, args.endpoint_id)
+        require_policy_action(connection, manifest, engagement_id, endpoint["host"], "hunt")
+        role = normalize_field_label(require_text(args.role, "role"))
+        if not is_safe_identifier_field(role):
+            raise BugBountyError("role must be an identifier-style label such as app_group_id")
+        reviewer = require_text(args.confirmed_by, "confirmed-by", 200)
+        note = require_text(args.note, "note", 1000) if args.note else "Analyst confirmed semantic identifier role."
+        identifier_endpoint_update(
+            connection, engagement_id, args.endpoint_id, args.position, role,
+            status="confirmed", reviewer=reviewer, note=note,
+        )
+        connection.commit()
+        print(f"Identifier role confirmed: endpoint {args.endpoint_id}, position {args.position} -> {role}.")
+        return 0
+    finally:
+        connection.close()
+
+
+def command_identifier_reject(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        get_program(connection, engagement_id)
+        endpoint = endpoint_row(connection, engagement_id, args.endpoint_id)
+        require_policy_action(connection, manifest, engagement_id, endpoint["host"], "hunt")
+        role = normalize_field_label(require_text(args.role, "role"))
+        if not is_safe_identifier_field(role):
+            raise BugBountyError("role must be an identifier-style label such as app_group_id")
+        reviewer = require_text(args.rejected_by, "rejected-by", 200)
+        reason = require_text(args.reason, "reason", 1000)
+        identifier_endpoint_update(
+            connection, engagement_id, args.endpoint_id, args.position, role,
+            status="contradicted", reviewer=reviewer, note=reason,
+        )
+        connection.commit()
+        print(f"Identifier role rejected: endpoint {args.endpoint_id}, position {args.position} -> {role}.")
+        return 0
+    finally:
+        connection.close()
+
+
+def workflow_by_id(connection: sqlite3.Connection, engagement_id: int, workflow_id: int) -> sqlite3.Row:
+    row = connection.execute(
+        "SELECT * FROM application_workflows WHERE engagement_id = ? AND id = ?",
+        (engagement_id, workflow_id),
+    ).fetchone()
+    if row is None:
+        raise BugBountyError(f"workflow not found: {workflow_id}")
+    return row
+
+
+def command_identifier_relationship_list(args: argparse.Namespace) -> int:
+    connection, _, _, engagement_id = connect(args)
+    try:
+        get_program(connection, engagement_id)
+        rows = connection.execute(
+            "SELECT id, workflow_key, name, semantics_json FROM application_workflows "
+            "WHERE engagement_id = ? ORDER BY workflow_key",
+            (engagement_id,),
+        ).fetchall()
+        for row in rows:
+            semantics = workflow_semantics(row["semantics_json"])
+            for lead in semantics.get("identifier_leads", []):
+                print(f"- workflow {row['id']} {row['workflow_key']}: lead {lead.get('id')} roles={','.join(lead.get('roles', []))} status={lead.get('status', 'proposed')}")
+            for relation in semantics.get("relationships", []):
+                print(f"- workflow {row['id']} {row['workflow_key']}: {relation.get('from_role')} -[{relation.get('relation')}]-> {relation.get('to_role')} status={relation.get('status')}")
+        return 0
+    finally:
+        connection.close()
+
+
+def command_identifier_relationship_confirm(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        get_program(connection, engagement_id)
+        workflow = workflow_by_id(connection, engagement_id, args.workflow_id)
+        require_policy_action(connection, manifest, engagement_id, workflow["workflow_key"].split(":", 1)[0], "hunt")
+        from_role = normalize_field_label(require_text(args.from_role, "from-role"))
+        to_role = normalize_field_label(require_text(args.to_role, "to-role"))
+        relation = require_label(args.relation, "relation")
+        if from_role == to_role:
+            raise BugBountyError("relationship endpoints must be distinct roles")
+        confirmed_by = require_text(args.confirmed_by, "confirmed-by", 200)
+        semantics = workflow_semantics(workflow["semantics_json"])
+        valid_roles = {
+            str(role)
+            for lead in semantics.get("identifier_leads", [])
+            if isinstance(lead, dict)
+            and lead.get("status") not in {"rejected", "contradicted"}
+            for role in lead.get("roles", [])
+        }
+        if valid_roles and not {from_role, to_role} <= valid_roles:
+            raise BugBountyError("relationship roles are not present in an observed identifier lead")
+        workflow_host, workflow_name = str(workflow["workflow_key"]).split(":", 1)
+        confirmed_roles: set[str] = set()
+        related_endpoints = connection.execute(
+            "SELECT * FROM endpoints WHERE engagement_id = ? AND host = ?",
+            (engagement_id, workflow_host),
+        ).fetchall()
+        for endpoint in related_endpoints:
+            if root_segment(endpoint["path_template"]) != workflow_name:
+                continue
+            for parameter in semantic_path_for_endpoint(endpoint).get("parameters", []):
+                selected = parameter.get("selected_role")
+                if selected:
+                    confirmed_roles.add(str(selected))
+        if not {from_role, to_role} <= confirmed_roles:
+            raise BugBountyError(
+                "confirm both identifier roles on an endpoint before confirming their relationship"
+            )
+        relationship = {
+            "id": semantic_key(
+                "identifier-relationship",
+                {"workflow_id": int(workflow["id"]), "from_role": from_role, "to_role": to_role, "relation": relation},
+            ),
+            "from_role": from_role,
+            "to_role": to_role,
+            "relation": relation,
+            "status": "confirmed",
+            "confirmed_by": confirmed_by,
+            "confirmed_at": utc_text(),
+            "notes": require_text(args.note, "note", 1000) if args.note else None,
+        }
+        semantics["relationships"] = [
+            item for item in semantics.get("relationships", []) if item.get("id") != relationship["id"]
+        ] + [relationship]
+        save_workflow_semantics(connection, int(workflow["id"]), semantics, json_string_set(workflow["states_json"]))
+        connection.commit()
+        print(f"Identifier relationship confirmed: {from_role} -[{relation}]-> {to_role}.")
         return 0
     finally:
         connection.close()
@@ -2642,6 +3467,48 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--cursor")
     ingest.add_argument("--include-bodies", action="store_true", help="save redacted request structures")
     ingest.set_defaults(func=command_ingest)
+
+    identifier = subparsers.add_parser(
+        "identifier", help="inspect and review redacted semantic identifier candidates"
+    )
+    identifier_subparsers = identifier.add_subparsers(dest="identifier_command", required=True)
+    identifier_list = identifier_subparsers.add_parser("list", help="list identifier candidates and review status")
+    add_common_arguments(identifier_list)
+    identifier_list.set_defaults(func=command_identifier_list)
+    identifier_confirm = identifier_subparsers.add_parser("confirm", help="confirm one identifier role")
+    add_common_arguments(identifier_confirm)
+    identifier_confirm.add_argument("--endpoint-id", type=int, required=True)
+    identifier_confirm.add_argument("--position", type=int, required=True, choices=range(1, 101))
+    identifier_confirm.add_argument("--role", required=True)
+    identifier_confirm.add_argument("--confirmed-by", required=True)
+    identifier_confirm.add_argument("--note")
+    identifier_confirm.set_defaults(func=command_identifier_confirm)
+    identifier_reject = identifier_subparsers.add_parser("reject", help="reject one identifier role candidate")
+    add_common_arguments(identifier_reject)
+    identifier_reject.add_argument("--endpoint-id", type=int, required=True)
+    identifier_reject.add_argument("--position", type=int, required=True, choices=range(1, 101))
+    identifier_reject.add_argument("--role", required=True)
+    identifier_reject.add_argument("--reason", required=True)
+    identifier_reject.add_argument("--rejected-by", required=True)
+    identifier_reject.set_defaults(func=command_identifier_reject)
+    identifier_relationship = identifier_subparsers.add_parser(
+        "relationship", help="inspect or confirm relationships between identifier roles"
+    )
+    relationship_subparsers = identifier_relationship.add_subparsers(
+        dest="relationship_command", required=True
+    )
+    relationship_list = relationship_subparsers.add_parser("list", help="list relationship leads and confirmations")
+    add_common_arguments(relationship_list)
+    relationship_list.set_defaults(func=command_identifier_relationship_list)
+    relationship_confirm = relationship_subparsers.add_parser("confirm", help="confirm an identifier relationship")
+    add_common_arguments(relationship_confirm)
+    relationship_confirm.add_argument("--workflow-id", type=int, required=True)
+    relationship_confirm.add_argument("--from-role", required=True)
+    relationship_confirm.add_argument("--to-role", required=True)
+    relationship_confirm.add_argument("--relation", default="scoped-by")
+    relationship_confirm.add_argument("--confirmed-by", required=True)
+    relationship_confirm.add_argument("--note")
+    relationship_confirm.set_defaults(func=command_identifier_relationship_confirm)
 
     map_command = subparsers.add_parser("map", help="derive a persistent endpoint/workflow map")
     add_common_arguments(map_command)

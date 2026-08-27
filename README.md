@@ -192,6 +192,11 @@ MAPPA extends endpoint heuristics with an analyst-confirmed application model:
 workflow states and ordered transitions produce explicit invariants,
 implementation assumptions, and explainable single-variable hypotheses. It
 augments analyst reasoning; it does not replace approval or manual validation.
+The identifier-semantics extension keeps the generic endpoint key while adding
+redacted, engagement-scoped HMAC correlation for path/query/request/response
+identifiers. It can propose semantic roles and co-occurrence relationships,
+but only explicit analyst confirmation makes them eligible for relationship-
+derived hypotheses.
 
 The dedicated `bugbounty` agent has no direct HexStrike, Fetch, Playwright, or
 Burp MCP permissions. It prepares and audits bounded plans; any approved Burp
@@ -217,16 +222,16 @@ output/
 
 JSON is the complete phase handoff. SQLite is a normalized secondary index; persistence is agent-driven and should be checked by the analyst. Generated output, databases, manifests, wordlists, downloaded HexStrike code, and custom Nuclei templates are excluded from Git.
 
-Bug-bounty hunts additionally persist program metadata, symbolic identities, normalized endpoints with Burp references, application workflows (including versioned semantic state/transition/invariant JSON), ranked hypotheses with stable semantic keys and reasoning, hunt sessions, and HackerOne outcomes. Live cookies and bearer tokens do not belong in these mapping tables.
+Bug-bounty hunts additionally persist program metadata, symbolic identities, normalized endpoints with Burp references, application workflows (including versioned semantic state/transition/invariant JSON), redacted identifier fingerprints and semantic path metadata, ranked hypotheses with stable semantic keys and reasoning, hunt sessions, and HackerOne outcomes. Live cookies, bearer tokens, and raw identifier values do not belong in these mapping tables.
 
 ## Project Status
 
 Implemented and tested in the repository:
 
-- schema version 7 with a backwards-compatible workflow-semantics migration;
+- schema version 8 with backwards-compatible workflow-semantics and identifier-semantics migrations;
 
 - engagement validation, activation, and exact/wildcard/CIDR/URL scope decisions;
-- schema initialization and version 1–6 to version 7 migration with backup;
+- schema initialization and version 1–7 to version 8 migration with backup;
 - runtime and MCP diagnostics;
 - agent/configuration/link contract checks;
 - shell syntax checks through CI;

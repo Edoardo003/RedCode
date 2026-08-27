@@ -78,10 +78,13 @@ redactor:
 ```
 
 Accepted records contain `id` (or `message_id`), `url`, `method`, `headers`,
-and optional `body`; a nested `request` object is also accepted. URLs may be
-represented by `scheme`, `host`, and `path`. The importer removes values from
-query strings, redacts sensitive headers and body values, derives path
-templates such as `/api/orders/{id}`, and skips out-of-scope messages. Raw
+and optional `body`; a nested `request` or `response` object is also accepted.
+URLs may be represented by `scheme`, `host`, and `path`. The importer removes
+values from query strings, redacts sensitive headers and body values, derives
+path templates such as `/api/orders/{id}`, and skips out-of-scope messages. It
+also correlates structural identifiers from path/query/request/response data
+using a local HMAC key and stores only fingerprints plus field/path context in
+`identifier_registry`; raw
 Burp exports are never copied into RedCode output. A source-aware Burp
 reference and a redacted-request fingerprint make re-importing the same selected
 traffic idempotent without assuming that two Burp projects use globally unique
@@ -136,13 +139,35 @@ analyst-reviewed observation after a test, so the next queue generation can
 continue the observe → model → test → learn loop. The semantics are versioned
 JSON inside `application_workflows`; no parallel table is needed.
 
+### Review identifier semantics
+
+Identifier roles are deliberately proposals, not facts inferred from a URL.
+Inspect the redacted candidates and co-occurrence leads, then confirm only the
+semantics supported by application context:
+
+```bash
+./redcode bugbounty identifier list
+./redcode bugbounty identifier confirm --endpoint-id 42 --position 3 \
+  --role segment_id --confirmed-by analyst
+./redcode bugbounty identifier relationship list
+./redcode bugbounty identifier relationship confirm --workflow-id 7 \
+  --from-role segment_id --to-role app_group_id --relation scoped-by \
+  --confirmed-by analyst
+```
+
+Use `identifier reject` with a reason when a candidate is wrong. Confirmed
+relationships can add a single-variable relationship hypothesis to the queue;
+unreviewed leads never do. The generic endpoint template remains authoritative
+for deduplication, while the semantic display template improves explainability.
+
 `queue --generate` keeps the baseline ownership/state hypothesis for eligible
 endpoints. Its score uses actual imported symbolic identities and tenants,
 workflow sensitivity, number of observations, endpoint coverage, and the
 program's duplicate-risk value. It also creates deduplicated semantic proposals
-for confirmed transition, invariant, terminal-state, authorization-change, and
-trust-boundary cases. Each proposal is explainable and includes a suggested
-control request, a single-variable change, and an expected secure result. If a
+for confirmed transition, invariant, terminal-state, authorization-change,
+trust-boundary, and identifier-relationship cases. Each proposal is explainable
+and includes a suggested control request, a single-variable change, and an
+expected secure result. If a
 workflow has no confirmed semantics, generation degrades to the existing
 generic baseline rather than fabricating business meaning. The queue remains a
 prioritization aid, not proof.

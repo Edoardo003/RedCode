@@ -166,6 +166,7 @@ Required practices:
 - `finding_relations`: attack-chain and deduplication relationships.
 - `bug_bounty_programs`: HackerOne policy, bounty, account, and opportunity metadata.
 - `identities`: non-secret symbolic role and tenant identities.
+- `identifier_registry`: engagement-scoped HMAC fingerprints and redacted role/path context; never raw values.
 - `endpoints`: normalized application surface with Burp provenance.
 - `application_workflows`: actors, objects, and lifecycle state models.
 - `hypotheses`: persistent MAPPA queue and score components.
@@ -175,7 +176,7 @@ Required practices:
 - `burp_import_runs` and `burp_message_refs`: redacted selected Burp imports with provenance.
 - `test_plans`, `approval_executions`, and `hypothesis_events`: immutable active-test plans, bounded outcomes, and audit history.
 
-Initialize or upgrade the configured database with `./redcode db migrate`. Version 1–6 databases are backed up before migration. The current schema version is 7. Workflow semantics are persisted on `application_workflows`; generated hypotheses keep a stable semantic key and explainable reasoning JSON.
+Initialize or upgrade the configured database with `./redcode db migrate`. Version 1–7 databases are backed up before migration. The current schema version is 8. Workflow semantics are persisted on `application_workflows`; generated hypotheses keep a stable semantic key and explainable reasoning JSON. Identifier semantics are stored as redacted, engagement-scoped HMAC fingerprints in `identifier_registry` and semantic path metadata; the local HMAC key is never committed.
 
 The `scans.phase` and `scans.subdomain` fields support existing resume prompts. File-based `progress.json` creation and cleanup remain prompt-driven rather than transactionally enforced by the launcher, so resume is still experimental and must be verified.
 
@@ -242,6 +243,6 @@ Generated Nuclei templates belong under `templates/nuclei/custom/`; that directo
 - Keep model assignments in `opencode.jsonc`; do not duplicate them in prose as guaranteed availability.
 - Treat downloaded HexStrike, wordlists, browser binaries, generated output, databases, and custom templates as local state.
 - Do not commit secrets, credentials, flags, client evidence, or generated assessment data.
-- Keep local engagement manifests, databases, backups, and activated context out of Git.
+- Keep local engagement manifests, databases, backups, identifier HMAC keys, and activated context out of Git.
 - Validate configuration, paths, schema assumptions, and internal documentation links after changes.
 - Clearly distinguish verified behavior from prompt intent and planned work.
