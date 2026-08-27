@@ -44,7 +44,7 @@ except ModuleNotFoundError:
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 MANIFEST_VERSION = 1
 ACTIONS = {
     "recon",
@@ -346,7 +346,7 @@ def migrate_database(path: Path, backup: bool = True) -> tuple[int, Path | None]
             return SCHEMA_VERSION, backup_path
 
         version = connection.execute("PRAGMA user_version").fetchone()[0]
-        if version not in {0, 1, 2, 3, 4, 5, 6}:
+        if version not in {0, 1, 2, 3, 4, 5, 6, 7}:
             raise RuntimeError(f"unsupported database schema version: {version}")
 
         required_tables = {
@@ -375,12 +375,16 @@ def migrate_database(path: Path, backup: bool = True) -> tuple[int, Path | None]
         scan_columns = table_columns(connection, "scans")
         plan_columns = table_columns(connection, "test_plans")
         burp_ref_columns = table_columns(connection, "burp_message_refs")
+        workflow_columns = table_columns(connection, "application_workflows")
+        hypothesis_columns = table_columns(connection, "hypotheses")
         current = version == SCHEMA_VERSION and required_tables <= tables
         if (
             current
             and {"phase", "subdomain", "engagement_id", "asset_id"} <= scan_columns
             and {"policy_snapshot_id"} <= plan_columns
             and {"source_message_ref", "request_fingerprint"} <= burp_ref_columns
+            and {"semantics_json"} <= workflow_columns
+            and {"semantic_key", "reasoning_json"} <= hypothesis_columns
         ):
             return SCHEMA_VERSION, None
 
@@ -426,6 +430,9 @@ def migrate_database(path: Path, backup: bool = True) -> tuple[int, Path | None]
         if version == 5:
             apply_migration(6, "006_burp_provenance_dedupe.sql", "burp_provenance_dedupe")
             version = 6
+        if version == 6:
+            apply_migration(7, "007_workflow_semantics.sql", "workflow_semantics")
+            version = 7
         if version == 6 and not required_tables <= table_names(connection):
             apply_schema(connection)
             connection.commit()
@@ -528,6 +535,14 @@ class Doctor:
                 if "burp_message_refs" in tables
                 else set()
             )
+            workflow_columns = (
+                table_columns(connection, "application_workflows")
+                if "application_workflows" in tables
+                else set()
+            )
+            hypothesis_columns = (
+                table_columns(connection, "hypotheses") if "hypotheses" in tables else set()
+            )
             connection.close()
         except sqlite3.Error as exc:
             self.fail(f"database check failed: {exc}")
@@ -561,6 +576,17 @@ class Doctor:
         if missing_burp_columns:
             self.fail(
                 "burp_message_refs table missing columns: " + ", ".join(missing_burp_columns)
+            )
+        missing_workflow_columns = sorted({"semantics_json"} - workflow_columns)
+        if missing_workflow_columns:
+            self.fail(
+                "application_workflows table missing columns: "
+                + ", ".join(missing_workflow_columns)
+            )
+        missing_hypothesis_columns = sorted({"semantic_key", "reasoning_json"} - hypothesis_columns)
+        if missing_hypothesis_columns:
+            self.fail(
+                "hypotheses table missing columns: " + ", ".join(missing_hypothesis_columns)
             )
         if os.name != "nt" and path.stat().st_mode & 0o077:
             self.warn(f"database is readable by other users: {path}")

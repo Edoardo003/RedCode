@@ -175,7 +175,7 @@ Required practices:
 - `burp_import_runs` and `burp_message_refs`: redacted selected Burp imports with provenance.
 - `test_plans`, `approval_executions`, and `hypothesis_events`: immutable active-test plans, bounded outcomes, and audit history.
 
-Initialize or upgrade the configured database with `./redcode db migrate`. Version 1–5 databases are backed up before migration. The current schema version is 6.
+Initialize or upgrade the configured database with `./redcode db migrate`. Version 1–6 databases are backed up before migration. The current schema version is 7. Workflow semantics are persisted on `application_workflows`; generated hypotheses keep a stable semantic key and explainable reasoning JSON.
 
 The `scans.phase` and `scans.subdomain` fields support existing resume prompts. File-based `progress.json` creation and cleanup remain prompt-driven rather than transactionally enforced by the launcher, so resume is still experimental and must be verified.
 

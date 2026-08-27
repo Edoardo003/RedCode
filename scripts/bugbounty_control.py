@@ -98,6 +98,15 @@ def require_label(value: str, field: str = "label") -> str:
     return value
 
 
+def require_text(value: str, field: str, maximum: int = 1000) -> str:
+    text = value.strip()
+    if not text:
+        raise BugBountyError(f"{field} must not be empty")
+    if len(text) > maximum:
+        raise BugBountyError(f"{field} must be at most {maximum} characters")
+    return text
+
+
 def output_directory(manifest: dict[str, Any]) -> Path:
     path = ROOT / "output" / manifest["name"] / "scans" / "mappa"
     path.mkdir(parents=True, exist_ok=True)
@@ -946,6 +955,69 @@ def json_string_set(value: str | None) -> set[str]:
     return {str(item) for item in decoded if isinstance(item, (str, int, float))}
 
 
+def json_object(value: str | None) -> dict[str, Any]:
+    try:
+        decoded = json.loads(value or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def workflow_semantics(value: str | None) -> dict[str, Any]:
+    """Return the compact, analyst-confirmed workflow model.
+
+    This intentionally keeps business semantics in the workflow record rather
+    than inferring them from redacted HTTP values.  Lists are used for durable,
+    explainable graph edges and reasoning artifacts.
+    """
+    decoded = json_object(value)
+    states = decoded.get("states", {})
+    transitions = decoded.get("transitions", [])
+    invariants = decoded.get("invariants", [])
+    observations = decoded.get("observations", [])
+    return {
+        "version": 1,
+        "states": states if isinstance(states, dict) else {},
+        "transitions": [item for item in transitions if isinstance(item, dict)],
+        "invariants": [item for item in invariants if isinstance(item, dict)],
+        "observations": [item for item in observations if isinstance(item, dict)],
+    }
+
+
+def ensure_semantic_states(semantics: dict[str, Any], states: Iterable[str]) -> dict[str, Any]:
+    result = workflow_semantics(canonical_json(semantics))
+    for state in states:
+        result["states"].setdefault(str(state), {"terminal": False})
+    return result
+
+
+def semantic_key(prefix: str, value: dict[str, Any]) -> str:
+    digest = hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()[:20]
+    return f"{prefix}:{digest}"
+
+
+def workflow_row(
+    connection: sqlite3.Connection, engagement_id: int, host: str, name: str
+) -> sqlite3.Row:
+    row = connection.execute(
+        "SELECT * FROM application_workflows WHERE engagement_id = ? AND workflow_key = ?",
+        (engagement_id, f"{host}:{name}"),
+    ).fetchone()
+    if row is None:
+        raise BugBountyError("workflow is not mapped; run ingest and map first")
+    return row
+
+
+def save_workflow_semantics(
+    connection: sqlite3.Connection, workflow_id: int, semantics: dict[str, Any], states: Iterable[str]
+) -> None:
+    connection.execute(
+        "UPDATE application_workflows SET states_json = ?, semantics_json = ?, updated_at=datetime('now') "
+        "WHERE id = ?",
+        (canonical_json(sorted(set(states))), canonical_json(semantics), workflow_id),
+    )
+
+
 def endpoint_identity_context(
     connection: sqlite3.Connection, engagement_id: int
 ) -> dict[int, list[sqlite3.Row]]:
@@ -985,6 +1057,7 @@ def existing_workflow_context(
             "actors": json_string_set(row["actors_json"]),
             "objects": json_string_set(row["objects_json"]),
             "states": json_string_set(row["states_json"]),
+            "semantics": workflow_semantics(row["semantics_json"]),
             "sensitivity": int(row["sensitivity"]),
             "notes": row["notes"],
         }
@@ -1150,6 +1223,269 @@ def mappa_priority(components: dict[str, int]) -> int:
     )
 
 
+def semantic_priority_for(
+    endpoint: sqlite3.Row,
+    identities: list[sqlite3.Row],
+    workflow: dict[str, Any],
+    program_duplicate_risk: int | None,
+    *,
+    confidence: int,
+    sensitivity: int,
+    authorization_effect: str = "none",
+    terminal: bool = False,
+    trust_boundaries: Iterable[str] = (),
+) -> tuple[dict[str, int], int]:
+    components, _ = priority_for(endpoint, identities, workflow, program_duplicate_risk)
+    if authorization_effect in {"revoke", "transfer"} or list(trust_boundaries):
+        components["boundary"] = max(components["boundary"], 4)
+    if terminal:
+        components["novelty"] = max(components["novelty"], 4)
+    components["impact"] = max(components["impact"], min(5, max(2, sensitivity)))
+    components["evidence"] = max(components["evidence"], min(5, confidence))
+    return components, mappa_priority(components)
+
+
+def endpoint_for_semantic_seed(
+    endpoints: list[sqlite3.Row], endpoint_id: int | None
+) -> sqlite3.Row | None:
+    if endpoint_id is not None:
+        return next((row for row in endpoints if int(row["id"]) == int(endpoint_id)), None)
+    return next((row for row in endpoints if row["state_change"]), None) or (endpoints[0] if endpoints else None)
+
+
+def semantic_seed(
+    *,
+    workflow: dict[str, Any],
+    endpoint: sqlite3.Row,
+    kind: str,
+    source_id: str,
+    invariant: str,
+    assumption: str,
+    violation: str,
+    suggested_control: str,
+    suggested_change: str,
+    expected_result: str,
+    actor_label: str,
+    object_state: str,
+    authorization_effect: str,
+    trust_boundaries: Iterable[str],
+    confidence: int,
+    sensitivity: int,
+    terminal: bool,
+    identities: list[sqlite3.Row],
+    duplicate_risk: int | None,
+) -> dict[str, Any]:
+    boundaries = sorted(set(str(value) for value in trust_boundaries))
+    components, priority = semantic_priority_for(
+        endpoint,
+        identities,
+        workflow,
+        duplicate_risk,
+        confidence=confidence,
+        sensitivity=sensitivity,
+        authorization_effect=authorization_effect,
+        terminal=terminal,
+        trust_boundaries=boundaries,
+    )
+    identity = semantic_key(
+        "semantic",
+        {
+            "workflow": workflow["id"],
+            "endpoint": int(endpoint["id"]),
+            "source": source_id,
+            "kind": kind,
+            "authorization_effect": authorization_effect,
+        },
+    )
+    reasoning = {
+        "generator": "workflow-semantics-v1",
+        "kind": kind,
+        "workflow": workflow["name"],
+        "source_id": source_id,
+        "observed_endpoint": f"{endpoint['method']} {endpoint['path_template']}",
+        "invariant": invariant,
+        "assumption": assumption,
+        "violation": violation,
+        "suggested_control": suggested_control,
+        "suggested_single_change": suggested_change,
+        "expected_result": expected_result,
+        "authorization_effect": authorization_effect,
+        "trust_boundaries": boundaries,
+        "confidence": confidence,
+    }
+    statement = f"{violation} Expected invariant: {invariant}"
+    return {
+        "semantic_key": identity,
+        "statement": statement,
+        "actor_label": actor_label,
+        "action": endpoint["method"],
+        "object_owner": "workflow-defined-boundary" if boundaries else "workflow-defined-object",
+        "object_state": object_state,
+        "components": components,
+        "priority": priority,
+        "reasoning": reasoning,
+    }
+
+
+def semantic_hypothesis_seeds(
+    workflow: dict[str, Any],
+    endpoints: list[sqlite3.Row],
+    identities_by_endpoint: dict[int, list[sqlite3.Row]],
+    duplicate_risk: int | None,
+) -> list[tuple[sqlite3.Row, dict[str, Any]]]:
+    """Derive proposals from confirmed workflow semantics, never endpoint names alone."""
+    semantics = workflow.get("semantics", {})
+    seeds: list[tuple[sqlite3.Row, dict[str, Any]]] = []
+    invariants = semantics.get("invariants", [])
+    for transition in semantics.get("transitions", []):
+        endpoint = endpoint_for_semantic_seed(endpoints, transition.get("endpoint_id"))
+        if endpoint is None:
+            continue
+        from_state = str(transition.get("from", "observed"))
+        to_state = str(transition.get("to", "observed"))
+        states = semantics.get("states", {})
+        terminal = bool(isinstance(states.get(to_state), dict) and states[to_state].get("terminal"))
+        confidence = int(transition.get("confidence", 3))
+        sensitivity = max(int(workflow.get("sensitivity", 0)), 4 if transition.get("sensitive") else 0)
+        actors = transition.get("actors") or []
+        actor = str(actors[0]) if actors else "authorized-user"
+        identities = identities_by_endpoint.get(int(endpoint["id"]), [])
+        related = [item for item in invariants if item.get("transition_id") == transition.get("id")]
+        if terminal and not related:
+            invariant = f"An object in terminal state {to_state} cannot perform actions that require {from_state}."
+            assumption = "Server-side lifecycle validation is re-evaluated after the transition."
+            seeds.append((endpoint, semantic_seed(
+                workflow=workflow, endpoint=endpoint, kind="terminal-state", source_id=str(transition["id"]),
+                invariant=invariant, assumption=assumption,
+                violation=(f"An action valid while {from_state} may remain accepted after the object reaches terminal state {to_state}."),
+                suggested_control=f"Perform {endpoint['method']} {endpoint['path_template']} while the object is {from_state}.",
+                suggested_change=f"Move the same object to {to_state}, then repeat the same action once.",
+                expected_result=f"The repeated action is rejected because {to_state} is terminal.",
+                actor_label=actor, object_state=to_state, authorization_effect=str(transition.get("authorization_effect", "none")),
+                trust_boundaries=transition.get("trust_boundaries", []), confidence=confidence,
+                sensitivity=sensitivity, terminal=True, identities=identities, duplicate_risk=duplicate_risk,
+            )))
+        for prerequisite in transition.get("prerequisites", []):
+            invariant = f"Transition {from_state} -> {to_state} requires: {prerequisite}."
+            seeds.append((endpoint, semantic_seed(
+                workflow=workflow, endpoint=endpoint, kind="transition-prerequisite", source_id=str(transition["id"]),
+                invariant=invariant, assumption="Server-side transition validation enforces declared prerequisites.",
+                violation=f"The workflow may allow transition to {to_state} without required prerequisite: {prerequisite}.",
+                suggested_control=f"Use the observed transition with the prerequisite satisfied.",
+                suggested_change=f"Attempt the same transition once without: {prerequisite}.",
+                expected_result=f"The transition is rejected until {prerequisite} is satisfied.",
+                actor_label=actor, object_state=from_state, authorization_effect=str(transition.get("authorization_effect", "none")),
+                trust_boundaries=transition.get("trust_boundaries", []), confidence=confidence,
+                sensitivity=sensitivity, terminal=terminal, identities=identities, duplicate_risk=duplicate_risk,
+            )))
+        effect = str(transition.get("authorization_effect", "none"))
+        if effect in {"revoke", "transfer"}:
+            capability = ", ".join(str(value) for value in transition.get("capabilities", [])) or "the affected capability"
+            invariant = f"After {from_state} -> {to_state}, {actor} must no longer retain {capability}."
+            seeds.append((endpoint, semantic_seed(
+                workflow=workflow, endpoint=endpoint, kind="authorization-change", source_id=str(transition["id"]),
+                invariant=invariant,
+                assumption="Authorization is re-evaluated after the workflow transition and stale grants are invalidated.",
+                violation=f"{actor} may retain {capability} after {from_state} -> {to_state}.",
+                suggested_control=f"Establish that {actor} can use {capability} before {from_state} -> {to_state}.",
+                suggested_change=f"Perform {from_state} -> {to_state}, then repeat one protected action with the same identity.",
+                expected_result=f"The protected action is denied after the authorization change.",
+                actor_label=actor, object_state=to_state, authorization_effect=effect,
+                trust_boundaries=transition.get("trust_boundaries", []), confidence=confidence,
+                sensitivity=sensitivity, terminal=terminal, identities=identities, duplicate_risk=duplicate_risk,
+            )))
+        boundaries = transition.get("trust_boundaries", [])
+        if boundaries:
+            boundary_text = ", ".join(str(value) for value in boundaries)
+            invariant = f"The {actor} action remains within the declared trust boundary: {boundary_text}."
+            seeds.append((endpoint, semantic_seed(
+                workflow=workflow, endpoint=endpoint, kind="trust-boundary", source_id=str(transition["id"]),
+                invariant=invariant,
+                assumption="The server validates the actor, tenant, and object boundary at the transition.",
+                violation=f"The transition {from_state} -> {to_state} may cross {boundary_text} without the required authorization.",
+                suggested_control=f"Perform {endpoint['method']} {endpoint['path_template']} with the authorized {actor} context.",
+                suggested_change=f"Repeat the transition while changing only the actor, tenant, or object across {boundary_text}.",
+                expected_result="The server rejects the request when the declared trust boundary is crossed.",
+                actor_label=actor, object_state=to_state, authorization_effect=effect,
+                trust_boundaries=boundaries, confidence=confidence, sensitivity=sensitivity,
+                terminal=terminal, identities=identities, duplicate_risk=duplicate_risk,
+            )))
+    for invariant_data in invariants:
+        protected = invariant_data.get("endpoint_ids") or []
+        scoped_endpoints = [
+            endpoint for endpoint in endpoints if int(endpoint["id"]) in {int(value) for value in protected}
+        ] or ([endpoint_for_semantic_seed(endpoints, None)] if endpoints else [])
+        for endpoint in [item for item in scoped_endpoints if item is not None]:
+            assumption = str((invariant_data.get("assumptions") or ["The application enforces this invariant server-side."])[0])
+            actor = str((invariant_data.get("actors") or ["authorized-user"])[0])
+            state = ", ".join(str(value) for value in invariant_data.get("states", [])) or "the declared workflow state"
+            seeds.append((endpoint, semantic_seed(
+                workflow=workflow, endpoint=endpoint, kind="invariant", source_id=str(invariant_data["id"]),
+                invariant=str(invariant_data["statement"]), assumption=assumption,
+                violation=f"The declared workflow invariant may be violated through {endpoint['method']} {endpoint['path_template']}.",
+                suggested_control=f"Establish the expected behavior for {endpoint['method']} {endpoint['path_template']} in {state}.",
+                suggested_change="Change only the workflow state, actor, or boundary identified by the invariant.",
+                expected_result="The server preserves the declared invariant.", actor_label=actor,
+                object_state=state, authorization_effect="none",
+                trust_boundaries=invariant_data.get("trust_boundaries", []),
+                confidence=int(invariant_data.get("confidence", 3)),
+                sensitivity=max(int(workflow.get("sensitivity", 0)), int(invariant_data.get("sensitivity", 0))),
+                terminal=False, identities=identities_by_endpoint.get(int(endpoint["id"]), []), duplicate_risk=duplicate_risk,
+            )))
+    return seeds
+
+
+def save_generated_semantic_hypothesis(
+    connection: sqlite3.Connection,
+    engagement_id: int,
+    workflow: dict[str, Any],
+    endpoint: sqlite3.Row,
+    seed: dict[str, Any],
+) -> bool:
+    row = connection.execute(
+        "SELECT id, hypothesis_id, status FROM hypotheses WHERE engagement_id = ? AND semantic_key = ?",
+        (engagement_id, seed["semantic_key"]),
+    ).fetchone()
+    if row is not None:
+        if row["status"] == "queued":
+            components = seed["components"]
+            connection.execute(
+                "UPDATE hypotheses SET statement = ?, actor_label = ?, action = ?, object_owner = ?, object_state = ?, "
+                "boundary_score = ?, impact_score = ?, novelty_score = ?, evidence_score = ?, duplicate_risk = ?, "
+                "test_cost = ?, operational_risk = ?, priority = ?, reasoning_json = ?, updated_at=datetime('now') WHERE id = ?",
+                (
+                    seed["statement"], seed["actor_label"], seed["action"], seed["object_owner"], seed["object_state"],
+                    components["boundary"], components["impact"], components["novelty"], components["evidence"],
+                    components["duplicate_risk"], components["test_cost"], components["operational_risk"],
+                    seed["priority"], canonical_json(seed["reasoning"]), row["id"],
+                ),
+            )
+        return False
+    hypothesis_key = f"HYP-{hashlib.sha256(seed['semantic_key'].encode()).hexdigest()[:10].upper()}"
+    components = seed["components"]
+    connection.execute(
+        "INSERT INTO hypotheses "
+        "(engagement_id, target_id, endpoint_id, workflow_id, hypothesis_id, semantic_key, statement, actor_label, "
+        "action, object_owner, object_state, channel, boundary_score, impact_score, novelty_score, evidence_score, "
+        "duplicate_risk, test_cost, operational_risk, priority, reasoning_json) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'http', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            engagement_id, endpoint["target_id"], endpoint["id"], workflow["id"], hypothesis_key,
+            seed["semantic_key"], seed["statement"], seed["actor_label"], seed["action"], seed["object_owner"],
+            seed["object_state"], components["boundary"], components["impact"], components["novelty"],
+            components["evidence"], components["duplicate_risk"], components["test_cost"], components["operational_risk"],
+            seed["priority"], canonical_json(seed["reasoning"]),
+        ),
+    )
+    created = connection.execute("SELECT id FROM hypotheses WHERE hypothesis_id = ?", (hypothesis_key,)).fetchone()
+    assert created is not None
+    record_hypothesis_event(
+        connection, int(created["id"]), "created-semantic", to_status="queued", actor="bugbounty-control",
+        details={"priority_components": components, "semantic_key": seed["semantic_key"], "reasoning": seed["reasoning"]},
+    )
+    return True
+
+
 def command_queue(args: argparse.Namespace) -> int:
     connection, manifest, _, engagement_id = connect(args)
     try:
@@ -1228,6 +1564,25 @@ def command_queue(args: argparse.Namespace) -> int:
                         actor="bugbounty-control",
                         details={"priority_components": components},
                     )
+            workflow_endpoints: dict[str, list[sqlite3.Row]] = {}
+            all_endpoints = connection.execute(
+                "SELECT * FROM endpoints WHERE engagement_id = ? ORDER BY host, path_template, method",
+                (engagement_id,),
+            ).fetchall()
+            for endpoint in all_endpoints:
+                workflow_endpoints.setdefault(workflow_key_for(endpoint), []).append(endpoint)
+            for workflow_key, workflow in workflows.items():
+                for endpoint, seed in semantic_hypothesis_seeds(
+                    workflow,
+                    workflow_endpoints.get(workflow_key, []),
+                    identities_by_endpoint,
+                    program["duplicate_risk"],
+                ):
+                    created += int(
+                        save_generated_semantic_hypothesis(
+                            connection, engagement_id, workflow, endpoint, seed
+                        )
+                    )
         rows = connection.execute(
             "SELECT h.*, e.host, e.method, e.path_template FROM hypotheses h "
             "LEFT JOIN endpoints e ON e.id = h.endpoint_id "
@@ -1243,6 +1598,7 @@ def command_queue(args: argparse.Namespace) -> int:
             return 0
         print("MAPPA queue")
         for row in rows:
+            reasoning = json_object(row["reasoning_json"])
             print(
                 f"- {row['hypothesis_id']} [{row['status']}, priority {row['priority']}]: "
                 f"{row['method']} {row['host']}{row['path_template']}\n"
@@ -1254,6 +1610,14 @@ def command_queue(args: argparse.Namespace) -> int:
                 f"state={row['object_state'] or '-'}, channel={row['channel'] or '-'}\n"
                 f"  {row['statement']}"
             )
+            if reasoning:
+                print(
+                    f"  Reasoning: invariant={reasoning.get('invariant', '-')}; "
+                    f"assumption={reasoning.get('assumption', '-')}\n"
+                    f"  Suggested control: {reasoning.get('suggested_control', '-')}\n"
+                    f"  Single change: {reasoning.get('suggested_single_change', '-')}\n"
+                    f"  Expected: {reasoning.get('expected_result', '-')}"
+                )
         return 0
     finally:
         connection.close()
@@ -1295,12 +1659,16 @@ def command_workflow_annotate(args: argparse.Namespace) -> int:
         sensitivity = args.sensitivity
         if sensitivity is None:
             sensitivity = int(existing["sensitivity"]) if existing else inferred_workflow_sensitivity(name)
+        semantics = ensure_semantic_states(
+            workflow_semantics(existing["semantics_json"] if existing else None),
+            existing_states | states,
+        )
         connection.execute(
             "INSERT INTO application_workflows "
-            "(engagement_id, target_id, workflow_key, name, states_json, actors_json, objects_json, sensitivity, notes) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "(engagement_id, target_id, workflow_key, name, states_json, semantics_json, actors_json, objects_json, sensitivity, notes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(engagement_id, workflow_key) DO UPDATE SET "
-            "target_id=excluded.target_id, name=excluded.name, states_json=excluded.states_json, "
+            "target_id=excluded.target_id, name=excluded.name, states_json=excluded.states_json, semantics_json=excluded.semantics_json, "
             "actors_json=excluded.actors_json, objects_json=excluded.objects_json, "
             "sensitivity=excluded.sensitivity, notes=excluded.notes, updated_at=datetime('now')",
             (
@@ -1309,6 +1677,7 @@ def command_workflow_annotate(args: argparse.Namespace) -> int:
                 key,
                 f"{host} / {name}",
                 canonical_json(sorted(existing_states | states)),
+                canonical_json(semantics),
                 canonical_json(sorted(existing_actors | set(args.actor or []))),
                 canonical_json(sorted(existing_objects | objects)),
                 sensitivity,
@@ -1317,6 +1686,171 @@ def command_workflow_annotate(args: argparse.Namespace) -> int:
         )
         connection.commit()
         print(f"Workflow annotated: {key} (sensitivity {sensitivity}/5).")
+        return 0
+    finally:
+        connection.close()
+
+
+def semantic_workflow_for_args(
+    connection: sqlite3.Connection, manifest: dict[str, Any], engagement_id: int, args: argparse.Namespace
+) -> tuple[str, str, sqlite3.Row, dict[str, Any]]:
+    host = control.target_parts(args.host)[0]
+    name = require_label(args.name, "workflow name")
+    require_policy_action(connection, manifest, engagement_id, host, "hunt")
+    row = workflow_row(connection, engagement_id, host, name)
+    return host, name, row, workflow_semantics(row["semantics_json"])
+
+
+def workflow_endpoint_ids(
+    connection: sqlite3.Connection, engagement_id: int, workflow_key: str, endpoint_ids: Iterable[int]
+) -> list[int]:
+    verified: list[int] = []
+    for endpoint_id in endpoint_ids:
+        endpoint = endpoint_row(connection, engagement_id, endpoint_id)
+        if workflow_key_for(endpoint) != workflow_key:
+            raise BugBountyError("endpoint does not belong to the selected workflow")
+        verified.append(int(endpoint["id"]))
+    return sorted(set(verified))
+
+
+def command_workflow_state_set(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        get_program(connection, engagement_id)
+        _, _, workflow, semantics = semantic_workflow_for_args(connection, manifest, engagement_id, args)
+        state = require_label(args.state, "state")
+        if args.terminal is None:
+            raise BugBountyError("choose either --terminal or --not-terminal")
+        metadata = semantics["states"].setdefault(state, {})
+        metadata["terminal"] = bool(args.terminal)
+        if args.notes is not None:
+            metadata["notes"] = require_text(args.notes, "state notes")
+        states = json_string_set(workflow["states_json"]) | {state}
+        save_workflow_semantics(connection, int(workflow["id"]), semantics, states)
+        connection.commit()
+        print(f"Workflow state updated: {state} (terminal={str(bool(args.terminal)).lower()}).")
+        return 0
+    finally:
+        connection.close()
+
+
+def command_workflow_transition_add(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        get_program(connection, engagement_id)
+        host, name, workflow, semantics = semantic_workflow_for_args(connection, manifest, engagement_id, args)
+        from_state = require_label(args.from_state, "from state")
+        to_state = require_label(args.to_state, "to state")
+        if from_state == to_state:
+            raise BugBountyError("a transition must change state")
+        for label in args.actor or []:
+            identity_row(connection, engagement_id, label)
+        endpoint_id = None
+        if args.endpoint_id is not None:
+            endpoint_id = workflow_endpoint_ids(
+                connection, engagement_id, f"{host}:{name}", [args.endpoint_id]
+            )[0]
+        transition = {
+            "from": from_state,
+            "to": to_state,
+            "endpoint_id": endpoint_id,
+            "actors": sorted(set(args.actor or [])),
+            "prerequisites": [require_text(value, "prerequisite") for value in args.prerequisite or []],
+            "postconditions": [require_text(value, "postcondition") for value in args.postcondition or []],
+            "authorization_effect": args.authorization_effect,
+            "capabilities": [require_text(value, "capability", 200) for value in args.capability or []],
+            "trust_boundaries": [require_label(value, "trust boundary") for value in args.trust_boundary or []],
+            "sensitive": bool(args.sensitive),
+            "confidence": args.confidence,
+            "notes": require_text(args.notes, "transition notes") if args.notes else None,
+        }
+        transition["id"] = semantic_key(
+            "transition",
+            {key: value for key, value in transition.items() if key not in {"notes", "confidence", "sensitive"}},
+        )
+        semantics = ensure_semantic_states(semantics, {from_state, to_state})
+        semantics["transitions"] = [
+            item for item in semantics["transitions"] if item.get("id") != transition["id"]
+        ] + [transition]
+        states = json_string_set(workflow["states_json"]) | {from_state, to_state}
+        save_workflow_semantics(connection, int(workflow["id"]), semantics, states)
+        connection.commit()
+        print(f"Workflow transition saved: {transition['id']} ({from_state} -> {to_state}).")
+        print("Next: add an invariant or run queue --generate to review eligible semantic proposals.")
+        return 0
+    finally:
+        connection.close()
+
+
+def command_workflow_invariant_add(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        get_program(connection, engagement_id)
+        host, name, workflow, semantics = semantic_workflow_for_args(connection, manifest, engagement_id, args)
+        for label in args.actor or []:
+            identity_row(connection, engagement_id, label)
+        assumptions = [require_text(value, "assumption") for value in args.assumption or []]
+        if not assumptions:
+            raise BugBountyError("an invariant needs at least one --assumption")
+        transition_id = args.transition
+        if transition_id and not any(item.get("id") == transition_id for item in semantics["transitions"]):
+            raise BugBountyError("invariant references an unknown workflow transition")
+        states = [require_label(value, "state") for value in args.state or []]
+        endpoint_ids = workflow_endpoint_ids(
+            connection, engagement_id, f"{host}:{name}", args.endpoint_id or []
+        )
+        invariant = {
+            "statement": require_text(args.statement, "invariant", 2000),
+            "states": sorted(set(states)),
+            "transition_id": transition_id,
+            "endpoint_ids": endpoint_ids,
+            "actors": sorted(set(args.actor or [])),
+            "assumptions": assumptions,
+            "trust_boundaries": [require_label(value, "trust boundary") for value in args.trust_boundary or []],
+            "confidence": args.confidence,
+            "sensitivity": args.sensitivity,
+            "notes": require_text(args.notes, "invariant notes") if args.notes else None,
+        }
+        invariant["id"] = semantic_key(
+            "invariant",
+            {key: value for key, value in invariant.items() if key not in {"notes", "confidence", "sensitivity"}},
+        )
+        semantics = ensure_semantic_states(semantics, states)
+        semantics["invariants"] = [
+            item for item in semantics["invariants"] if item.get("id") != invariant["id"]
+        ] + [invariant]
+        all_states = json_string_set(workflow["states_json"]) | set(states)
+        save_workflow_semantics(connection, int(workflow["id"]), semantics, all_states)
+        connection.commit()
+        print(f"Workflow invariant saved: {invariant['id']}.")
+        return 0
+    finally:
+        connection.close()
+
+
+def command_workflow_learn(args: argparse.Namespace) -> int:
+    connection, manifest, _, engagement_id = connect(args)
+    try:
+        get_program(connection, engagement_id)
+        _, _, workflow, semantics = semantic_workflow_for_args(connection, manifest, engagement_id, args)
+        if args.plan_id is not None:
+            plan = plan_row(connection, engagement_id, args.plan_id)
+            if plan["hypothesis_db_id"] is None:
+                raise BugBountyError("learning plan has no hypothesis")
+        observation_text = require_text(args.observation, "observation", 2000)
+        observation = {
+            "id": semantic_key("observation", {"workflow": int(workflow["id"]), "text": observation_text}),
+            "text": observation_text,
+            "plan_id": args.plan_id,
+            "confidence": args.confidence,
+            "recorded_at": utc_text(),
+        }
+        semantics["observations"] = semantics["observations"] + [observation]
+        save_workflow_semantics(
+            connection, int(workflow["id"]), semantics, json_string_set(workflow["states_json"])
+        )
+        connection.commit()
+        print("Workflow learning observation saved. Re-run queue --generate to refresh queued proposals.")
         return 0
     finally:
         connection.close()
@@ -1468,6 +2002,9 @@ def command_plan_create(args: argparse.Namespace) -> int:
             "cleanup": args.cleanup,
             "max_requests": args.max_requests,
         }
+        reasoning = json_object(hypothesis["reasoning_json"])
+        if reasoning:
+            plan["workflow_reasoning"] = reasoning
         plan_json = canonical_json(plan)
         plan_hash = sha256_bytes(plan_json.encode("utf-8"))
         connection.execute(
@@ -2126,6 +2663,88 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_annotate.add_argument("--sensitivity", type=int, choices=range(0, 6))
     workflow_annotate.add_argument("--notes")
     workflow_annotate.set_defaults(func=command_workflow_annotate)
+
+    workflow_state = workflow_subparsers.add_parser(
+        "state", help="record analyst-confirmed lifecycle state semantics"
+    )
+    workflow_state_subparsers = workflow_state.add_subparsers(
+        dest="workflow_state_command", required=True
+    )
+    workflow_state_set = workflow_state_subparsers.add_parser(
+        "set", help="mark a workflow state as terminal or non-terminal"
+    )
+    add_common_arguments(workflow_state_set)
+    workflow_state_set.add_argument("--host", required=True)
+    workflow_state_set.add_argument("--name", required=True)
+    workflow_state_set.add_argument("--state", required=True)
+    terminal_group = workflow_state_set.add_mutually_exclusive_group(required=True)
+    terminal_group.add_argument("--terminal", dest="terminal", action="store_true")
+    terminal_group.add_argument("--not-terminal", dest="terminal", action="store_false")
+    workflow_state_set.add_argument("--notes")
+    workflow_state_set.set_defaults(func=command_workflow_state_set)
+
+    workflow_transition = workflow_subparsers.add_parser(
+        "transition", help="record an analyst-confirmed workflow transition"
+    )
+    workflow_transition_subparsers = workflow_transition.add_subparsers(
+        dest="workflow_transition_command", required=True
+    )
+    workflow_transition_add = workflow_transition_subparsers.add_parser(
+        "add", help="add a lifecycle transition and its security semantics"
+    )
+    add_common_arguments(workflow_transition_add)
+    workflow_transition_add.add_argument("--host", required=True)
+    workflow_transition_add.add_argument("--name", required=True)
+    workflow_transition_add.add_argument("--from-state", required=True)
+    workflow_transition_add.add_argument("--to-state", required=True)
+    workflow_transition_add.add_argument("--endpoint-id", type=int)
+    workflow_transition_add.add_argument("--actor", action="append", help="existing symbolic identity")
+    workflow_transition_add.add_argument("--prerequisite", action="append")
+    workflow_transition_add.add_argument("--postcondition", action="append")
+    workflow_transition_add.add_argument(
+        "--authorization-effect", choices=("none", "grant", "revoke", "transfer"), default="none"
+    )
+    workflow_transition_add.add_argument("--capability", action="append")
+    workflow_transition_add.add_argument("--trust-boundary", action="append")
+    workflow_transition_add.add_argument("--sensitive", action="store_true")
+    workflow_transition_add.add_argument("--confidence", type=int, choices=range(0, 6), default=3)
+    workflow_transition_add.add_argument("--notes")
+    workflow_transition_add.set_defaults(func=command_workflow_transition_add)
+
+    workflow_invariant = workflow_subparsers.add_parser(
+        "invariant", help="record a workflow property and its implementation assumptions"
+    )
+    workflow_invariant_subparsers = workflow_invariant.add_subparsers(
+        dest="workflow_invariant_command", required=True
+    )
+    workflow_invariant_add = workflow_invariant_subparsers.add_parser(
+        "add", help="add an analyst-confirmed security invariant"
+    )
+    add_common_arguments(workflow_invariant_add)
+    workflow_invariant_add.add_argument("--host", required=True)
+    workflow_invariant_add.add_argument("--name", required=True)
+    workflow_invariant_add.add_argument("--statement", required=True)
+    workflow_invariant_add.add_argument("--state", action="append")
+    workflow_invariant_add.add_argument("--transition")
+    workflow_invariant_add.add_argument("--endpoint-id", type=int, action="append")
+    workflow_invariant_add.add_argument("--actor", action="append")
+    workflow_invariant_add.add_argument("--assumption", action="append", required=True)
+    workflow_invariant_add.add_argument("--trust-boundary", action="append")
+    workflow_invariant_add.add_argument("--confidence", type=int, choices=range(0, 6), default=3)
+    workflow_invariant_add.add_argument("--sensitivity", type=int, choices=range(0, 6), default=0)
+    workflow_invariant_add.add_argument("--notes")
+    workflow_invariant_add.set_defaults(func=command_workflow_invariant_add)
+
+    workflow_learn = workflow_subparsers.add_parser(
+        "learn", help="record analyst-reviewed learning that corrects the workflow model"
+    )
+    add_common_arguments(workflow_learn)
+    workflow_learn.add_argument("--host", required=True)
+    workflow_learn.add_argument("--name", required=True)
+    workflow_learn.add_argument("--observation", required=True)
+    workflow_learn.add_argument("--plan-id", type=int)
+    workflow_learn.add_argument("--confidence", type=int, choices=range(0, 6), default=3)
+    workflow_learn.set_defaults(func=command_workflow_learn)
 
     queue = subparsers.add_parser("queue", help="show or generate MAPPA hypotheses")
     add_common_arguments(queue)

@@ -109,10 +109,43 @@ lifecycle state, and sensitivity.
 `--name` is the first mapped path segment (for example `api` for
 `/api/orders/{id}`). Re-running `map` preserves these annotations.
 
-`queue --generate` creates a baseline ownership/state hypothesis for eligible
+### Confirm workflow semantics
+
+The structural map deliberately does not guess business meaning from endpoint
+names or redacted request values. Confirm the lifecycle graph that matters to
+the hunt, then let MAPPA derive proposals from it:
+
+```bash
+./redcode bugbounty workflow state set --host api.example.test --name invites \
+  --state accepted --terminal
+./redcode bugbounty workflow transition add \
+  --host api.example.test --name invites --from-state pending --to-state accepted \
+  --endpoint-id 42 --actor user-a --sensitive
+./redcode bugbounty workflow invariant add \
+  --host api.example.test --name invites \
+  --statement "An accepted invite cannot be accepted again" \
+  --state accepted --transition TRANSITION_KEY \
+  --endpoint-id 42 --assumption "The server rejects terminal-state replay"
+```
+
+Transitions preserve order and metadata (actor, endpoint, prerequisites,
+postconditions, authorization effect, capabilities, trust boundary, sensitivity,
+and confidence). Invariants preserve the expected property and the assumptions
+that may explain a violation. `workflow learn --observation ...` appends an
+analyst-reviewed observation after a test, so the next queue generation can
+continue the observe → model → test → learn loop. The semantics are versioned
+JSON inside `application_workflows`; no parallel table is needed.
+
+`queue --generate` keeps the baseline ownership/state hypothesis for eligible
 endpoints. Its score uses actual imported symbolic identities and tenants,
 workflow sensitivity, number of observations, endpoint coverage, and the
-program's duplicate-risk value. It remains a prioritization aid, not proof.
+program's duplicate-risk value. It also creates deduplicated semantic proposals
+for confirmed transition, invariant, terminal-state, authorization-change, and
+trust-boundary cases. Each proposal is explainable and includes a suggested
+control request, a single-variable change, and an expected secure result. If a
+workflow has no confirmed semantics, generation degrades to the existing
+generic baseline rather than fabricating business meaning. The queue remains a
+prioritization aid, not proof.
 
 For a business-logic idea that is more specific than the baseline, add a
 contextual hypothesis instead of forcing it into a generic URL heuristic:

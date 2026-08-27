@@ -47,7 +47,7 @@ Warnings do not make the command fail. Configuration, database, HexStrike, or MC
 ./redcode db migrate
 ```
 
-The current schema version is 6. Existing version 1–5 databases are backed up before migration using a name such as `redcode.db.v5-backup-YYYYMMDDHHMMSS`. Re-running the command against an up-to-date database is idempotent and does not create another backup.
+The current schema version is 7. Existing version 1–6 databases are backed up before migration using a name such as `redcode.db.v6-backup-YYYYMMDDHHMMSS`. Re-running the command against an up-to-date database is idempotent and does not create another backup.
 
 Schema version 2 adds:
 
@@ -80,6 +80,12 @@ exports can be re-imported idempotently without treating two Burp projects' loca
 message IDs as the same record. Updating
 the policy supersedes drafts and cancels active approvals before a new plan can
 be approved.
+
+Schema version 7 adds the MAPPA workflow-semantic model. Each application
+workflow can persist analyst-confirmed states, ordered transitions, invariants,
+assumptions, and reviewed observations. Generated semantic hypotheses receive a
+stable key and reasoning JSON for explainability and deduplication; existing
+generic ownership hypotheses remain compatible.
 
 JSON findings remain the richer agent-to-agent handoff. SQLite provides normalized state and indexing.
 

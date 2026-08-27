@@ -1,5 +1,5 @@
 PRAGMA foreign_keys = ON;
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version INTEGER PRIMARY KEY,
@@ -17,6 +17,8 @@ INSERT OR IGNORE INTO schema_migrations (version, name)
 VALUES (5, 'policy_bound_test_plans');
 INSERT OR IGNORE INTO schema_migrations (version, name)
 VALUES (6, 'burp_provenance_dedupe');
+INSERT OR IGNORE INTO schema_migrations (version, name)
+VALUES (7, 'workflow_semantics');
 
 CREATE TABLE IF NOT EXISTS engagements (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -208,6 +210,7 @@ CREATE TABLE IF NOT EXISTS application_workflows (
   workflow_key TEXT NOT NULL,
   name TEXT NOT NULL,
   states_json TEXT NOT NULL DEFAULT '[]',
+  semantics_json TEXT NOT NULL DEFAULT '{}',
   actors_json TEXT NOT NULL DEFAULT '[]',
   objects_json TEXT NOT NULL DEFAULT '[]',
   sensitivity INTEGER NOT NULL DEFAULT 0 CHECK(sensitivity BETWEEN 0 AND 5),
@@ -224,6 +227,7 @@ CREATE TABLE IF NOT EXISTS hypotheses (
   endpoint_id INTEGER REFERENCES endpoints(id),
   workflow_id INTEGER REFERENCES application_workflows(id),
   hypothesis_id TEXT NOT NULL UNIQUE,
+  semantic_key TEXT,
   statement TEXT NOT NULL,
   actor_label TEXT,
   action TEXT,
@@ -241,6 +245,7 @@ CREATE TABLE IF NOT EXISTS hypotheses (
   status TEXT NOT NULL DEFAULT 'queued'
     CHECK(status IN ('queued','approved','testing','rejected','candidate','confirmed','duplicate','informative')),
   evidence_refs TEXT NOT NULL DEFAULT '[]',
+  reasoning_json TEXT NOT NULL DEFAULT '{}',
   notes TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
@@ -294,6 +299,8 @@ CREATE INDEX IF NOT EXISTS idx_endpoints_engagement_host ON endpoints(engagement
 CREATE INDEX IF NOT EXISTS idx_endpoints_coverage ON endpoints(engagement_id, coverage_status);
 CREATE INDEX IF NOT EXISTS idx_workflows_engagement ON application_workflows(engagement_id);
 CREATE INDEX IF NOT EXISTS idx_hypotheses_queue ON hypotheses(engagement_id, status, priority DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_hypotheses_semantic_identity
+  ON hypotheses(engagement_id, semantic_key);
 CREATE INDEX IF NOT EXISTS idx_hunt_sessions_engagement ON hunt_sessions(engagement_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_submissions_engagement ON bug_bounty_submissions(engagement_id, status);
 

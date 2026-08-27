@@ -115,10 +115,10 @@ class DatabaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             db = Path(temp_dir) / "fresh.db"
             version, backup = control.migrate_database(db)
-            self.assertEqual(version, 6)
+            self.assertEqual(version, 7)
             self.assertIsNone(backup)
             connection = sqlite3.connect(db)
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 6)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 7)
             self.assertIn("engagements", control.table_names(connection))
             self.assertIn("phase", control.table_columns(connection, "scans"))
             for table in (
@@ -137,7 +137,7 @@ class DatabaseTests(unittest.TestCase):
             )
             connection.close()
             repeated_version, repeated_backup = control.migrate_database(db)
-            self.assertEqual(repeated_version, 6)
+            self.assertEqual(repeated_version, 7)
             self.assertIsNone(repeated_backup)
 
     def test_v1_database_is_backed_up_and_migrated(self):
@@ -177,12 +177,12 @@ class DatabaseTests(unittest.TestCase):
             connection.close()
 
             version, backup = control.migrate_database(db)
-            self.assertEqual(version, 6)
+            self.assertEqual(version, 7)
             self.assertIsNotNone(backup)
             self.assertTrue(backup.exists())
 
             connection = sqlite3.connect(db)
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 6)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 7)
             self.assertEqual(
                 connection.execute("SELECT domain FROM targets").fetchone()[0],
                 "legacy.example.test",
@@ -218,10 +218,10 @@ class DatabaseTests(unittest.TestCase):
             connection.close()
 
             version, backup = control.migrate_database(db)
-            self.assertEqual(version, 6)
+            self.assertEqual(version, 7)
             self.assertIsNotNone(backup)
             connection = sqlite3.connect(db)
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 6)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 7)
             self.assertIn("hypotheses", control.table_names(connection))
             self.assertIn("endpoints", control.table_names(connection))
             connection.close()
@@ -230,37 +230,50 @@ class DatabaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             db = Path(temp_dir) / "v3.db"
             connection = sqlite3.connect(db)
-            connection.executescript(
+            schema_v6 = (
                 (Path(__file__).resolve().parents[1] / "schema.sql")
                 .read_text(encoding="utf-8")
-                .replace("PRAGMA user_version = 6;", "PRAGMA user_version = 3;")
+                .replace("PRAGMA user_version = 7;", "PRAGMA user_version = 3;")
+                .replace("  semantics_json TEXT NOT NULL DEFAULT '{}',\n", "")
+                .replace("  semantic_key TEXT,\n", "")
+                .replace("  reasoning_json TEXT NOT NULL DEFAULT '{}',\n", "")
+                .replace(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_hypotheses_semantic_identity\n"
+                    "  ON hypotheses(engagement_id, semantic_key);\n",
+                    "",
+                )
             )
+            connection.executescript(schema_v6)
             for table in (
                 "policy_snapshots", "program_scope_rules", "program_restrictions",
                 "burp_import_runs", "burp_message_refs", "test_plans",
                 "approval_executions", "hypothesis_events",
             ):
                 connection.execute(f"DROP TABLE {table}")
-            connection.execute("DELETE FROM schema_migrations WHERE version IN (4, 5, 6)")
+            connection.execute("DELETE FROM schema_migrations WHERE version IN (4, 5, 6, 7)")
             connection.commit()
             connection.close()
 
             version, backup = control.migrate_database(db)
-            self.assertEqual(version, 6)
+            self.assertEqual(version, 7)
             self.assertIsNotNone(backup)
             self.assertTrue(backup.exists())
             connection = sqlite3.connect(db)
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 6)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 7)
             self.assertIn("test_plans", control.table_names(connection))
             self.assertIn("hypothesis_events", control.table_names(connection))
             self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM schema_migrations WHERE version = 6").fetchone()[0],
+                connection.execute("SELECT COUNT(*) FROM schema_migrations WHERE version = 7").fetchone()[0],
                 1,
             )
             self.assertIn("policy_snapshot_id", control.table_columns(connection, "test_plans"))
             self.assertTrue(
                 {"source_message_ref", "request_fingerprint"}
                 <= control.table_columns(connection, "burp_message_refs")
+            )
+            self.assertIn("semantics_json", control.table_columns(connection, "application_workflows"))
+            self.assertTrue(
+                {"semantic_key", "reasoning_json"} <= control.table_columns(connection, "hypotheses")
             )
             connection.close()
 
